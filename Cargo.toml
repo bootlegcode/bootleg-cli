@@ -4,4 +4,18 @@ version = "0.1.0"
 edition = "2024"
 license-file = "LICENSE"
 
+[[bin]]
+name = "bootleg"
+path = "src/main.rs"
+
 [dependencies]
+bootleg-core = { path = "../bootleg-core" }
+clap = { version = "4", features = ["derive", "env"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
