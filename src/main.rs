@@ -3,7 +3,7 @@ use bootleg_cli::{
         ProjectCredentialDelivery, complete_project_issuance, require_rotation_confirmation,
     },
     config::{RepositoryConfig, resolve_origin},
-    deployment,
+    display,
     domain::{ApiOrigin, DeviceLogin, NoticeMode, PolicyError, terminal_text},
     git,
     http::{ApiClient, Failure},
@@ -14,7 +14,7 @@ use bootleg_cli::{
     selection::{self, OrganizationChoice, ProjectChoice},
 };
 use bootleg_core::{DisplayName, OrgId, ProjectId, SecretString, api::*};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::{
     io::{IsTerminal, Write},
@@ -45,8 +45,17 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
-    Login,
+    /// Authorize this CLI in your browser (credentials last 30 days).
+    Login {
+        /// Print the approval URL without launching a browser (for remote terminals).
+        #[arg(long)]
+        no_browser: bool,
+        /// Label shown in the website's authorized-device list.
+        #[arg(long)]
+        device_name: Option<DisplayName>,
+    },
     Logout,
+    /// Show the authenticated user and credential expiry.
     Whoami,
     /// Select an organization and project interactively using fzf.
     Config,
@@ -72,20 +81,17 @@ enum Command {
         #[command(subcommand)]
         command: InstancesCommand,
     },
-    Generate {
-        #[arg(value_enum)]
-        target: Target,
-        #[arg(long)]
-        name_env: Option<String>,
-    },
 }
 #[derive(Subcommand)]
 enum OrgsCommand {
+    /// List organizations accessible to your user.
     List,
+    /// Save an organization selection and clear the selected project.
     Use { org_id: OrgId },
 }
 #[derive(Subcommand)]
 enum ProjectsCommand {
+    /// List projects in the explicit or saved organization.
     List {
         #[arg(long)]
         org_id: Option<OrgId>,
@@ -99,6 +105,7 @@ enum ProjectsCommand {
         #[arg(long)]
         token_file: PathBuf,
     },
+    /// Save an active project selection in the explicit or saved organization.
     Use {
         project_id: ProjectId,
         #[arg(long)]
@@ -132,12 +139,6 @@ enum InstancesCommand {
         watch: bool,
     },
 }
-#[derive(Clone, Copy, ValueEnum)]
-enum Target {
-    Docker,
-    Kubernetes,
-}
-
 fn output(value: &impl Serialize, json: bool) -> Result<()> {
     let text = if json {
         serde_json::to_string(value)?
@@ -151,6 +152,14 @@ fn output(value: &impl Serialize, json: bool) -> Result<()> {
     // serde JSON already escapes control characters. Human output remains escaped as well.
     println!("{text}");
     Ok(())
+}
+fn discovery_output(value: &impl Serialize, human: String, json: bool) -> Result<()> {
+    if json {
+        output(value, true)
+    } else {
+        print!("{human}");
+        Ok(())
+    }
 }
 fn selected_org(value: Option<OrgId>, config: &RepositoryConfig) -> Result<OrgId> {
     value
@@ -230,7 +239,17 @@ impl Drop for FileDelivery {
         }
     }
 }
-fn login(api: &ApiClient, origin: &ApiOrigin, allow_http: bool) -> Result<DeviceTokenResponse> {
+fn login(
+    api: &ApiClient,
+    origin: &ApiOrigin,
+    allow_http: bool,
+    no_browser: bool,
+    device_name: Option<&DisplayName>,
+) -> Result<DeviceTokenResponse> {
+    // Fail local storage setup before asking the user to approve a single-use grant.
+    let credentials = store()?;
+    credentials.prepare()?;
+    let start = Instant::now();
     let unique = bootleg_core::DeviceGrantId::new().to_string();
     let label = format!(
         "{} CLI {}",
@@ -240,10 +259,14 @@ fn login(api: &ApiClient, origin: &ApiOrigin, allow_http: bool) -> Result<Device
     let grant: DeviceCodeResponse = api.post(
         "auth/device/code",
         &DeviceCodeRequest {
-            device_name: Some(label.parse().map_err(|_| "invalid device name")?),
+            device_name: Some(match device_name {
+                Some(name) => name.clone(),
+                None => label.parse().map_err(|_| "invalid device name")?,
+            }),
         },
         false,
     )?;
+    let mut policy = DeviceLogin::new(grant.expires_in, grant.interval)?;
     // Browser URL may have a path but never credentials, query, fragment, or plaintext without opt-in.
     let uri =
         url::Url::parse(&grant.verification_uri).map_err(|_| "invalid device verification URL")?;
@@ -253,12 +276,19 @@ fn login(api: &ApiClient, origin: &ApiOrigin, allow_http: bool) -> Result<Device
         || uri.password().is_some()
         || uri.query().is_some()
         || uri.fragment().is_some()
-        || uri.origin()
-            != url::Url::parse(origin.as_str())
-                .map_err(|_| "invalid API origin")?
-                .origin()
     {
-        return Err("unsafe device verification URL".into());
+        return Err("unsafe device verification URL: expected HTTPS (or explicitly allowed HTTP), a host, and no credentials, query, or fragment".into());
+    }
+    if uri.origin()
+        != url::Url::parse(origin.as_str())
+            .map_err(|_| "invalid API origin")?
+            .origin()
+    {
+        return Err(format!(
+            "device verification origin {} does not match API origin {}; configure the web server's BOOTLEG_PUBLIC_BASE_URL to match the CLI API origin and restart the server",
+            terminal_text(&uri.origin().ascii_serialization()),
+            terminal_text(origin.as_str()),
+        ).into());
     }
     eprintln!(
         "Approve Bootleg CLI at {} using code {}",
@@ -273,24 +303,28 @@ fn login(api: &ApiClient, origin: &ApiOrigin, allow_http: bool) -> Result<Device
     } else {
         "xdg-open"
     };
-    match std::process::Command::new(opener)
-        .arg(uri.as_str())
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(mut child) => {
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-        }
-        Err(_) => {
-            eprintln!("Could not open a browser automatically. Open the URL above to continue.")
+    if !no_browser {
+        match std::process::Command::new(opener)
+            .arg(uri.as_str())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                std::thread::spawn(move || {
+                    if !child.wait().is_ok_and(|status| status.success()) {
+                        eprintln!(
+                            "Could not open a browser automatically. Open the URL above to continue."
+                        );
+                    }
+                });
+            }
+            Err(_) => {
+                eprintln!("Could not open a browser automatically. Open the URL above to continue.")
+            }
         }
     }
-    let start = Instant::now();
-    let mut policy = DeviceLogin::new(grant.expires_in, grant.interval)?;
     loop {
         std::thread::sleep(policy.wait(start.elapsed())?);
         if start.elapsed() >= Duration::from_secs(grant.expires_in) {
@@ -305,7 +339,9 @@ fn login(api: &ApiClient, origin: &ApiOrigin, allow_http: bool) -> Result<Device
         );
         match result {
             Ok(token) => {
-                store()?.save(origin, token.access_token.clone())?;
+                credentials.save(origin, token.access_token.clone()).map_err(|_| {
+                    "login approved but credential storage failed; revoke this device on the website and start a fresh login"
+                })?;
                 return Ok(token);
             }
             Err(Failure::Server(e)) => {
@@ -334,26 +370,10 @@ fn run(cli: &Cli) -> Result<()> {
         config.org_id = None;
         config.project_id = None;
     }
-    match &cli.command {
-        Command::Init { project_id, org_id } => {
-            config = RepositoryConfig::initialize(&origin, org_id.clone(), *project_id);
-            config.save(&cli.config)?;
-            return output(&config, cli.json);
-        }
-        Command::Generate { target, name_env } => {
-            let snippet = deployment::generate(
-                &origin,
-                selected_project(None, &config)?,
-                name_env.as_deref(),
-                matches!(target, Target::Kubernetes),
-            )?;
-            if cli.json {
-                return output(&serde_json::json!({"snippet": snippet}), true);
-            }
-            print!("{snippet}");
-            return Ok(());
-        }
-        _ => {}
+    if let Command::Init { project_id, org_id } = &cli.command {
+        config = RepositoryConfig::initialize(&origin, org_id.clone(), *project_id);
+        config.save(&cli.config)?;
+        return output(&config, cli.json);
     }
     // Fail confirmation locally, before even bootstrap or credential loading.
     if let Command::Project {
@@ -365,12 +385,31 @@ fn run(cli: &Cli) -> Result<()> {
     {
         require_rotation_confirmation(*confirm)?;
     }
-    let token = if matches!(cli.command, Command::Login) {
+    // Resolve required local selection before credentials or network activity.
+    if let Command::Projects {
+        command: ProjectsCommand::List { org_id } | ProjectsCommand::Use { org_id, .. },
+    } = &cli.command
+    {
+        selected_org(org_id.clone(), &config)?;
+    }
+    let token = if matches!(cli.command, Command::Login { .. }) {
         None
     } else {
         credential(&origin)?
     };
     let has_credential = token.is_some();
+    if !has_credential
+        && matches!(
+            cli.command,
+            Command::Whoami
+                | Command::Orgs { .. }
+                | Command::Projects {
+                    command: ProjectsCommand::List { .. } | ProjectsCommand::Use { .. }
+                }
+        )
+    {
+        return Err("not logged in; run bootleg login".into());
+    }
     let mut api = ApiClient::new(origin.clone(), token)?;
     if cli.notices != NoticeMode::Never {
         let bootstrap = api.bootstrap();
@@ -384,8 +423,17 @@ fn run(cli: &Cli) -> Result<()> {
         }
     }
     match &cli.command {
-        Command::Login => {
-            let token = login(&api, &origin, cli.allow_http)?;
+        Command::Login {
+            no_browser,
+            device_name,
+        } => {
+            let token = login(
+                &api,
+                &origin,
+                cli.allow_http,
+                *no_browser,
+                device_name.as_ref(),
+            )?;
             output(
                 &serde_json::json!({"logged_in":true,"expires_in":token.expires_in}),
                 cli.json,
@@ -405,7 +453,7 @@ fn run(cli: &Cli) -> Result<()> {
                 eprintln!(
                     "You are not logged in, or your login has expired. Starting browser login before configuring this project."
                 );
-                let token = login(&api, &origin, cli.allow_http)?;
+                let token = login(&api, &origin, cli.allow_http, false, None)?;
                 api = ApiClient::new(origin.clone(), Some(token.access_token))?;
                 eprintln!("Logged in. Loading your organizations and projects.");
                 if std::env::var_os("BOOTLEG_USER_TOKEN").is_some() {
@@ -457,11 +505,25 @@ fn run(cli: &Cli) -> Result<()> {
                 cli.json,
             )
         }
-        Command::Whoami => output(&api.get::<IdentityResponse>("auth/whoami", &[])?, cli.json),
+        Command::Whoami => {
+            let identity = api.get::<IdentityResponse>("auth/whoami", &[])?;
+            let color = std::io::stdout().is_terminal()
+                && std::env::var_os("NO_COLOR").is_none()
+                && std::env::var("TERM").as_deref() != Ok("dumb");
+            discovery_output(
+                &identity,
+                display::identity_with_color(&identity, color),
+                cli.json,
+            )
+        }
         Command::Orgs { command } => {
             let orgs: Vec<Organization> = pages(&api, "orgs")?;
             match command {
-                OrgsCommand::List => output(&orgs, cli.json),
+                OrgsCommand::List => discovery_output(
+                    &orgs,
+                    display::organizations(&orgs, config.org_id.as_ref()),
+                    cli.json,
+                ),
                 OrgsCommand::Use { org_id } => {
                     let selected = orgs
                         .iter()
@@ -471,18 +533,28 @@ fn run(cli: &Cli) -> Result<()> {
                     config.project_id = None;
                     config.api_url = Some(origin.as_str().into());
                     config.save(&cli.config)?;
-                    output(selected, cli.json)
+                    discovery_output(
+                        selected,
+                        format!(
+                            "Using organization {} ({org_id}). Project selection cleared.\n",
+                            terminal_text(selected.name.as_str())
+                        ),
+                        cli.json,
+                    )
                 }
             }
         }
         Command::Projects { command } => match command {
-            ProjectsCommand::List { org_id } => output(
-                &pages::<Project>(
-                    &api,
-                    &format!("orgs/{}/projects", selected_org(org_id.clone(), &config)?),
-                )?,
-                cli.json,
-            ),
+            ProjectsCommand::List { org_id } => {
+                let org = selected_org(org_id.clone(), &config)?;
+                let projects = pages::<Project>(&api, &format!("orgs/{org}/projects"))?;
+                let current = if config.org_id.as_ref() == Some(&org) {
+                    config.project_id
+                } else {
+                    None
+                };
+                discovery_output(&projects, display::projects(&projects, current), cli.json)
+            }
             ProjectsCommand::Use { project_id, org_id } => {
                 let org = selected_org(org_id.clone(), &config)?;
                 let projects: Vec<Project> = pages(&api, &format!("orgs/{org}/projects"))?;
@@ -492,7 +564,15 @@ fn run(cli: &Cli) -> Result<()> {
                 config.project_id = Some(*project_id);
                 config.api_url = Some(origin.as_str().into());
                 config.save(&cli.config)?;
-                output(selected, cli.json)
+                discovery_output(
+                    selected,
+                    format!(
+                        "Using project {} ({project_id}) in organization {}.\n",
+                        terminal_text(selected.name.as_str()),
+                        selected.org_id
+                    ),
+                    cli.json,
+                )
             }
             ProjectsCommand::Create {
                 name,
@@ -608,7 +688,12 @@ fn run(cli: &Cli) -> Result<()> {
     }
 }
 fn main() {
-    let cli = Cli::parse();
+    let args: Vec<_> = std::env::args_os().collect();
+    let cli = if args.len() == 1 {
+        Cli::parse_from(args.into_iter().chain([std::ffi::OsString::from("--help")]))
+    } else {
+        Cli::parse_from(args)
+    };
     if let Err(e) = run(&cli) {
         if cli.json {
             let value = e.downcast_ref::<Failure>().map(Failure::json).unwrap_or_else(|| serde_json::json!({"error":{"code":"cli_error","message":terminal_text(&e.to_string()),"level":"error"}}));

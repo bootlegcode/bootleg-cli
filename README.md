@@ -37,9 +37,19 @@ bootleg instances list --watch
 bootleg logout
 ```
 
+`orgs list` and `projects list` show readable tables (`*` marks the saved selection); `--json` returns arrays of API records. Empty lists are successful. `orgs use ORG_ID` validates membership, saves the organization, and clears the project selection. `projects list` and `projects use PROJECT_ID` accept `--org-id ORG_ID` to override the saved organization; only active projects in that organization can be selected. Selection changes are saved to `--config PATH` (default `.bootleg.json`) only after validation. These commands require login and never start an interactive picker. `whoami` shows your email, user ID, credential ID, and expiry; `--json` returns the identity record without a token.
+
 There is no standalone `bootleg baseline` command. Instance results retain local Git relationship information when the agent reports a commit. Missing metadata is unknown; matching commits never prove filesystem equality. The CLI does not fetch missing objects.
 
 **Pod names belong to smuggler.** The CLI neither reads a local `POD_NAME` nor stores pod-name settings in repository config. Smuggler discovers/resolves its own runtime label and reports it. Legacy `name_env` repository settings are ignored and omitted on the next save.
+
+## Browser login
+
+`bootleg login` prints a unique approval URL and matching code, then opens your default browser. Compare the code and explicitly authorize the device on the website. An existing website session is reused; otherwise sign in there. The CLI never asks for your password.
+
+Use `bootleg login --no-browser` on remote terminals, and optionally `--device-name "Work laptop"` to customize the device label. Otherwise a unique OS-based name is generated; you can edit it during approval. Browser-opening failure leaves the printable URL available.
+
+The CLI uses bounded long polling (30-second HTTP timeout for the backend's 20-second polls). Credentials expire after 30 days without refresh. Re-run login, or let `bootleg config` start login automatically. Website device revocation takes effect on subsequent requests; password changes do not revoke CLI credentials. If approval succeeds but local storage fails, revoke that device on the website before starting a fresh login.
 
 ## Project credentials
 
@@ -51,17 +61,6 @@ bootleg project token rotate --confirm --token-file /private/path/new-project-to
 Selecting/configuring an existing project does not recover its key. Creation and rotation deliver the one-time key to a mandatory new owner-only file (0600), reserved before mutation; existing files/symlinks are never overwritten. Keep the file outside Git, provision it using your secret manager, and remove it after delivery. Keys never appear in normal output or `--json`. Rotation invalidates agents' old key.
 
 Mutations never automatically retry. On an uncertain result reconcile server state before trying again; an undelivered key may require an explicitly confirmed rotation. An ambiguous device exchange requires fresh login.
-
-## What are the generators for?
-
-`bootleg generate kubernetes` and `bootleg generate docker` are **optional agent deployment examples**, not part of `bootleg config` or normal CLI use:
-
-- `kubernetes` prints an environment fragment for an already-instrumented container: API/project identity, runtime Secret reference, and Downward API references that smuggler can read inside the pod.
-- `docker` prints a Compose fragment with API/project identity and a project-token reference supplied at runtime.
-
-They do not deploy anything, build images, install smuggler, or change the cluster. They assume your container already runs smuggler. If deployment is managed elsewhere, you do not need these commands. Pod-name references in these examples are **agent-side runtime configuration**, not values observed or selected by the CLI. Optional `generate --name-env VARIABLE` writes only an agent-side environment-variable reference; it does not read the variable on your laptop.
-
-There is **no application build step in the CLI workflow**. Earlier image-build guidance described optional agent metadata, not a required Bootleg command. Never bake project tokens into images. Plaintext agent connections require the agent's own explicit development opt-in; a generated HTTP URL alone is not that opt-in.
 
 ## Configuration and security
 
@@ -105,4 +104,12 @@ Real-server tests are opt-in, using the actual web service/backing stores and re
 cargo test --test real_server -- --ignored
 ```
 
-Browser login/config selection against the live service, project mutations, and Docker/kind end-to-end acceptance still require coordinated integration testing. No mock API/WS server substitutes are used. See `HANDOFF.md`.
+Run the repeatable login/config acceptance test with Docker, Python 3, `fzf`, and the sibling web checkout:
+
+```sh
+python3 scripts/test-device-auth.py
+```
+
+This builds both binaries and starts disposable PostgreSQL, Valkey, Mailpit, and the real web application. It exercises approval during long polling, denial, private credential storage, identity/discovery, real `fzf` under a PTY (one/multiple organizations), cancellation, expired-credential re-login, and logout. It uses actual cookie/CSRF-protected website forms over HTTP; it does not automate a graphical browser or test OS browser dispatch. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used.
+
+Project mutations and Docker/kind agent acceptance remain separate integration work. See `HANDOFF.md`.

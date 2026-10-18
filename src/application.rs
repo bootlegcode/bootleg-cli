@@ -90,6 +90,8 @@ mod tests {
         let id = projects[0].project_id;
         assert!(select_project(&projects, &org, id).is_ok());
         assert!(select_project(&projects, &org, "99999".parse().unwrap()).is_err());
+        assert!(select_project(&projects, &bootleg_core::OrgId::new(), id).is_err());
+        assert!(select_project(&[], &org, id).is_err());
         projects[0].active = false;
         assert!(select_project(&projects, &org, id).is_err());
     }

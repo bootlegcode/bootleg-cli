@@ -30,7 +30,8 @@ impl CredentialStore {
             .collect();
         self.directory.join(format!("{key}.json"))
     }
-    fn prepare(&self) -> Result<(), Box<dyn std::error::Error>> {
+    /// Check storage support and directory privacy before starting authorization.
+    pub fn prepare(&self) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::{DirBuilderExt, MetadataExt};

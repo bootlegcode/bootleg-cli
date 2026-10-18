@@ -1,6 +1,6 @@
 pub mod application;
 pub mod config;
-pub mod deployment;
+pub mod display;
 pub mod domain;
 pub mod fuzzy;
 pub mod git;

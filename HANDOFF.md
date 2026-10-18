@@ -4,11 +4,11 @@ Scope: `bootleg-cli` only. No sibling repository/shared contract edits. Core che
 
 ## Current surface
 
-- login/logout/whoami, **orgs list/use**, projects list/create/use, confirmed token rotation, init, interactive **config**, optional deployment examples, and instance watch.
+- login/logout/whoami, **orgs list/use**, projects list/create/use, confirmed token rotation, init, interactive **config**, and instance watch.
 - `bootleg config` checks login eligibility and starts browser login with an explanation for missing/expired/revoked credentials. It uses the sole organization automatically, otherwise an fzf fuzzy picker, then always prompts for an active project. Both config/init use `RepositoryConfig::initialize` and save only API/org/project identity after successful selection.
 - No standalone `baseline` command. Git relationship inspection remains attached to instance results.
-- No pod/name-env settings in saved CLI config. Legacy name-env config is discarded on save. Smuggler owns pod identity. Optional deployment examples may reference agent-side runtime environment variables; generators never read laptop pod variables.
-- No application build step. Optional Docker/Compose/Kubernetes generators only print deployment fragments for containers already running smuggler, without applying or building anything.
+- No pod/name-env settings in saved CLI config. Legacy name-env config is discarded on save. Smuggler owns pod identity.
+- No application build step or deployment generators.
 - Origin-scoped owner-only Unix credential fallback, CI origin binding, reserved owner-only project-token delivery. No automatic mutation retries or secret-bearing DTO output.
 
 ## Boundaries and tests
@@ -25,7 +25,7 @@ Validation:
 
 ## Latest change files
 
-`src/main.rs`, `src/config.rs`, `src/application.rs`, `src/lib.rs`, new `src/selection.rs`, new `src/fuzzy.rs`, `src/deployment.rs`, `tests/offline_cli.rs`, `README.md`, `HANDOFF.md`.
+`src/main.rs`, `src/config.rs`, `src/application.rs`, `src/lib.rs`, new `src/selection.rs`, new `src/fuzzy.rs`, `tests/offline_cli.rs`, `README.md`, `HANDOFF.md`.
 
 Earlier CLI implementation also added/changed `Cargo.toml`, `Cargo.lock`, `src/domain.rs`, `src/git.rs`, `src/http.rs`, `src/storage.rs`, `tests/real_server.rs`.
 
