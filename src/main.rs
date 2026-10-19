@@ -22,12 +22,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use display::style::{self, Renderer, Tone};
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 #[derive(Parser)]
 #[command(
     name = "bootleg",
     version,
-    about = "Container discovery (not file synchronization)"
+    about = "Discover and manage your Bootleg containers."
 )]
 struct Cli {
     #[arg(long, global = true, env = "BOOTLEG_API_URL")]
@@ -36,6 +38,9 @@ struct Cli {
     allow_http: bool,
     #[arg(long, global = true)]
     json: bool,
+    /// Disable human-output colors (JSON is never styled).
+    #[arg(long, global = true)]
+    no_color: bool,
     #[arg(long, global = true, env = "BOOTLEG_NOTICES", default_value = "auto")]
     notices: NoticeMode,
     #[arg(long, global = true, default_value = ".bootleg.json")]
@@ -143,11 +148,7 @@ fn output(value: &impl Serialize, json: bool) -> Result<()> {
     let text = if json {
         serde_json::to_string(value)?
     } else {
-        serde_json::to_string_pretty(value)?
-            .lines()
-            .map(terminal_text)
-            .collect::<Vec<_>>()
-            .join("\n")
+        style::result(&serde_json::to_value(value)?)
     };
     // serde JSON already escapes control characters. Human output remains escaped as well.
     println!("{text}");
@@ -161,6 +162,32 @@ fn discovery_output(value: &impl Serialize, human: String, json: bool) -> Result
         Ok(())
     }
 }
+fn config_output(config: &RepositoryConfig, cli: &Cli) -> Result<()> {
+    discovery_output(
+        config,
+        Renderer::stdout().panel(
+            "Success · Configuration saved",
+            &format!(
+                "API: {}\nOrganization: {}\nProject: {}\nSaved to: {}",
+                config.api_url.as_deref().unwrap_or("not selected"),
+                config
+                    .org_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "not selected".into()),
+                config
+                    .project_id
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .unwrap_or_else(|| "not selected".into()),
+                cli.config.display()
+            ),
+            Tone::Success,
+        ),
+        cli.json,
+    )
+}
+
 fn selected_org(value: Option<OrgId>, config: &RepositoryConfig) -> Result<OrgId> {
     value
         .or(config.org_id.clone())
@@ -168,7 +195,7 @@ fn selected_org(value: Option<OrgId>, config: &RepositoryConfig) -> Result<OrgId
 }
 fn selected_project(value: Option<ProjectId>, config: &RepositoryConfig) -> Result<ProjectId> {
     value
-        .or(config.project_id)
+        .or_else(|| config.project_id.clone())
         .ok_or_else(|| "select a project with bootleg projects use or init".into())
 }
 fn store() -> Result<CredentialStore> {
@@ -290,10 +317,14 @@ fn login(
             terminal_text(origin.as_str()),
         ).into());
     }
-    eprintln!(
-        "Approve Bootleg CLI at {} using code {}",
-        terminal_text(&grant.verification_uri),
-        terminal_text(grant.user_code.expose_secret())
+    style::message(
+        "Login · Approval required",
+        &format!(
+            "Approve Bootleg CLI at {} using code {}",
+            terminal_text(&grant.verification_uri),
+            terminal_text(grant.user_code.expose_secret())
+        ),
+        Tone::Info,
     );
     // Browser launch is best effort; the printable URL always remains available.
     let opener = if cfg!(target_os = "macos") {
@@ -314,15 +345,19 @@ fn login(
             Ok(mut child) => {
                 std::thread::spawn(move || {
                     if !child.wait().is_ok_and(|status| status.success()) {
-                        eprintln!(
-                            "Could not open a browser automatically. Open the URL above to continue."
+                        style::message(
+                            "Warning",
+                            "Could not open a browser automatically. Open the URL above to continue.",
+                            Tone::Warning,
                         );
                     }
                 });
             }
-            Err(_) => {
-                eprintln!("Could not open a browser automatically. Open the URL above to continue.")
-            }
+            Err(_) => style::message(
+                "Warning",
+                "Could not open a browser automatically. Open the URL above to continue.",
+                Tone::Warning,
+            ),
         }
     }
     loop {
@@ -371,9 +406,9 @@ fn run(cli: &Cli) -> Result<()> {
         config.project_id = None;
     }
     if let Command::Init { project_id, org_id } = &cli.command {
-        config = RepositoryConfig::initialize(&origin, org_id.clone(), *project_id);
+        config = RepositoryConfig::initialize(&origin, org_id.clone(), project_id.clone());
         config.save(&cli.config)?;
-        return output(&config, cli.json);
+        return config_output(&config, cli);
     }
     // Fail confirmation locally, before even bootstrap or credential loading.
     if let Command::Project {
@@ -419,7 +454,7 @@ fn run(cli: &Cli) -> Result<()> {
             cli.json,
             std::io::stderr().is_terminal(),
         ) {
-            eprintln!("{message}");
+            style::message("Notice", &message, Tone::Info);
         }
     }
     match &cli.command {
@@ -450,15 +485,23 @@ fn run(cli: &Cli) -> Result<()> {
                 true
             };
             if needs_login {
-                eprintln!(
-                    "You are not logged in, or your login has expired. Starting browser login before configuring this project."
+                style::message(
+                    "Login",
+                    "You are not logged in, or your login has expired. Starting browser login before configuring this project.",
+                    Tone::Info,
                 );
                 let token = login(&api, &origin, cli.allow_http, false, None)?;
                 api = ApiClient::new(origin.clone(), Some(token.access_token))?;
-                eprintln!("Logged in. Loading your organizations and projects.");
+                style::message(
+                    "Success",
+                    "Logged in. Loading your organizations and projects.",
+                    Tone::Success,
+                );
                 if std::env::var_os("BOOTLEG_USER_TOKEN").is_some() {
-                    eprintln!(
-                        "Replace or unset the expired BOOTLEG_USER_TOKEN for subsequent commands."
+                    style::message(
+                        "Warning",
+                        "Replace or unset the expired BOOTLEG_USER_TOKEN for subsequent commands.",
+                        Tone::Warning,
                     );
                 }
             }
@@ -473,9 +516,13 @@ fn run(cli: &Cli) -> Result<()> {
             let picker = picker.as_mut().expect("interactive preflight completed");
             let org_id = selection::organization(&choices, picker)?;
             if choices.len() == 1 {
-                eprintln!(
-                    "Using organization {} ({org_id}).",
-                    terminal_text(&choices[0].name)
+                style::message(
+                    "Organization selected",
+                    &format!(
+                        "Using organization {} ({org_id}).",
+                        terminal_text(&choices[0].name)
+                    ),
+                    Tone::Info,
                 );
             }
             let projects: Vec<Project> = pages(&api, &format!("orgs/{org_id}/projects"))?;
@@ -491,7 +538,7 @@ fn run(cli: &Cli) -> Result<()> {
             let project_id = selection::project(&org_id, &choices, picker)?;
             config = RepositoryConfig::initialize(&origin, Some(org_id), project_id);
             config.save(&cli.config)?;
-            output(&config, cli.json)
+            config_output(&config, cli)
         }
         Command::Logout => {
             match api.logout() {
@@ -507,9 +554,7 @@ fn run(cli: &Cli) -> Result<()> {
         }
         Command::Whoami => {
             let identity = api.get::<IdentityResponse>("auth/whoami", &[])?;
-            let color = std::io::stdout().is_terminal()
-                && std::env::var_os("NO_COLOR").is_none()
-                && std::env::var("TERM").as_deref() != Ok("dumb");
+            let color = Renderer::stdout().color;
             discovery_output(
                 &identity,
                 display::identity_with_color(&identity, color),
@@ -535,10 +580,7 @@ fn run(cli: &Cli) -> Result<()> {
                     config.save(&cli.config)?;
                     discovery_output(
                         selected,
-                        format!(
-                            "Using organization {} ({org_id}). Project selection cleared.\n",
-                            terminal_text(selected.name.as_str())
-                        ),
+                        Renderer::stdout().panel("Success · Organization selected", &format!("Using organization {} ({org_id}). Project selection cleared.\nSaved to: {}", terminal_text(selected.name.as_str()), cli.config.display()), Tone::Success),
                         cli.json,
                     )
                 }
@@ -559,17 +601,22 @@ fn run(cli: &Cli) -> Result<()> {
                 let org = selected_org(org_id.clone(), &config)?;
                 let projects: Vec<Project> = pages(&api, &format!("orgs/{org}/projects"))?;
                 let selected =
-                    bootleg_cli::application::select_project(&projects, &org, *project_id)?;
+                    bootleg_cli::application::select_project(&projects, &org, project_id.clone())?;
                 config.org_id = Some(org);
-                config.project_id = Some(*project_id);
+                config.project_id = Some(project_id.clone());
                 config.api_url = Some(origin.as_str().into());
                 config.save(&cli.config)?;
                 discovery_output(
                     selected,
-                    format!(
-                        "Using project {} ({project_id}) in organization {}.\n",
-                        terminal_text(selected.name.as_str()),
-                        selected.org_id
+                    Renderer::stdout().panel(
+                        "Success · Project selected",
+                        &format!(
+                            "Using project {} ({project_id}) in organization {}.\nSaved to: {}",
+                            terminal_text(selected.name.as_str()),
+                            selected.org_id,
+                            cli.config.display()
+                        ),
+                        Tone::Success,
                     ),
                     cli.json,
                 )
@@ -600,7 +647,7 @@ fn run(cli: &Cli) -> Result<()> {
                     true,
                 )?;
                 let project = complete_project_issuance(response, &mut delivery)?;
-                output(&project, cli.json)
+                discovery_output(&project, Renderer::stdout().panel("Success · Project created", &format!("Project: {} ({})\nToken file: {}\nKeep this file outside Git and deliver it using your secret manager.", project.name.as_str(), project.project_id, token_file.display()), Tone::Success), cli.json)
             }
         },
         Command::Project {
@@ -618,20 +665,18 @@ fn run(cli: &Cli) -> Result<()> {
             let response: ProjectTokenResponse = api.post(
                 &format!(
                     "projects/{}/token/rotate",
-                    selected_project(*project_id, &config)?
+                    selected_project(project_id.clone(), &config)?
                 ),
                 &RotateProjectTokenRequest::default(),
                 true,
             )?;
-            output(
-                &complete_project_issuance(response, &mut delivery)?,
-                cli.json,
-            )
+            let project = complete_project_issuance(response, &mut delivery)?;
+            discovery_output(&project, Renderer::stdout().panel("Success · Project token rotated", &format!("Project: {} ({})\nToken file: {}\nPrevious agent keys are invalid. Deliver the new key using your secret manager.", project.name.as_str(), project.project_id, token_file.display()), Tone::Success), cli.json)
         }
         Command::Instances {
             command: InstancesCommand::List { project_id, watch },
         } => {
-            let id = selected_project(*project_id, &config)?;
+            let id = selected_project(project_id.clone(), &config)?;
             loop {
                 let mut query = vec![("limit".into(), "200".into())];
                 let mut items = Vec::new();
@@ -694,12 +739,13 @@ fn main() {
     } else {
         Cli::parse_from(args)
     };
+    style::configure(cli.no_color);
     if let Err(e) = run(&cli) {
         if cli.json {
             let value = e.downcast_ref::<Failure>().map(Failure::json).unwrap_or_else(|| serde_json::json!({"error":{"code":"cli_error","message":terminal_text(&e.to_string()),"level":"error"}}));
             println!("{}", value);
         } else {
-            eprintln!("{}", terminal_text(&e.to_string()));
+            style::message("Error", &e.to_string(), Tone::Error);
         }
         std::process::exit(1);
     }

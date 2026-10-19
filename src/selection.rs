@@ -63,7 +63,7 @@ pub fn project(
     )?;
     eligible
         .get(index)
-        .map(|p| p.id)
+        .map(|p| p.id.clone())
         .ok_or(PolicyError("invalid project selection"))
 }
 
@@ -125,18 +125,18 @@ mod tests {
             labels: vec![],
         };
         let mut projects = vec![ProjectChoice {
-            id: "1".parse().unwrap(),
+            id: ProjectId::new(),
             org_id: id.clone(),
             name: "Same name".into(),
             active: true,
         }];
         assert_eq!(
-            project(&id, &projects, &mut prompt).unwrap().to_string(),
-            "1"
+            project(&id, &projects, &mut prompt).unwrap(),
+            projects[0].id
         );
         assert_eq!(prompt.calls, 1);
         projects.push(ProjectChoice {
-            id: "2".parse().unwrap(),
+            id: ProjectId::new(),
             org_id: id.clone(),
             name: "Same name".into(),
             active: false,
@@ -146,8 +146,8 @@ mod tests {
         projects[1].active = true;
         prompt.selected = Ok(1);
         assert_eq!(
-            project(&id, &projects, &mut prompt).unwrap().to_string(),
-            "2"
+            project(&id, &projects, &mut prompt).unwrap(),
+            projects[1].id
         );
         assert_ne!(prompt.labels[0], prompt.labels[1]);
         projects[1].org_id = OrgId::new();

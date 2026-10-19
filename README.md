@@ -28,9 +28,9 @@ bootleg login
 bootleg orgs list
 bootleg orgs use org_<id>
 bootleg projects list
-bootleg projects use 42
+bootleg projects use project_6m8x91b0349vbrq30fxn997q5s
 # Offline equivalent when you already know the IDs:
-bootleg init --project-id 42 --org-id org_<id>
+bootleg init --project-id project_6m8x91b0349vbrq30fxn997q5s --org-id org_<id>
 
 bootleg whoami
 bootleg instances list --watch
@@ -72,13 +72,17 @@ BOOTLEG_API_URL=http://localhost:3000 bootleg --allow-http config
 
 **Development status:** the current implementation still requires an explicit API URL or an existing repository `api_url`; the hosted default has not yet been wired in. The production endpoint needs to be confirmed before that implementation change. The override above is a development workaround, not the intended onboarding experience.
 
+Project IDs are typed strings such as `project_6m8x91b0349vbrq30fxn997q5s`, not integers. For existing repository configs with numeric IDs, remove the old `project_id` and run `bootleg config` to select the project again.
+
 Use `--config PATH` for another repository file. Saved settings are only `api_url`, `org_id`, `project_id`. Changing API origin clears inherited selections. URLs must be HTTPS origins without paths, userinfo, queries or fragments. Explicit local development may use `--allow-http` / `BOOTLEG_ALLOW_HTTP=true`. Redirects and automatic HTTP retries are disabled.
 
 User credentials use a **Unix owner-only file fallback**, not an OS keychain: `$HOME/.config/bootleg/credentials` (0700 directory, 0600 files), scoped to canonical API origin. There is no additional encryption at rest. Protect home-directory backups. Non-Unix file storage/delivery fails closed.
 
 CI can supply `BOOTLEG_USER_TOKEN` plus mandatory matching `BOOTLEG_USER_TOKEN_ORIGIN`. This is a user credential, not a project key. If interactive config replaces an expired CI credential through login, unset/update that environment token before subsequent commands. Logout revokes remotely before removing local credentials; 401 counts as already revoked, while network failure never claims success. Remove CI environment values separately.
 
-`--json` emits structured output; watch emits newline-delimited snapshots. Watch refreshes sequentially every three seconds after each completed refresh and emits a stale marker then exits on failure. Announcements use stderr only and are controlled by `--notices=auto|always|never` / `BOOTLEG_NOTICES`. Auto displays them only on interactive stderr outside JSON mode. Errors are never suppressed. Bootstrap is best effort (two seconds), once per network invocation; offline commands do not bootstrap.
+Human output uses consistent rounded tables/panels on interactive terminals, with cyan informational headings, green success messages, amber warnings, and red errors. Narrow terminals use stacked list records. Redirected output and `TERM=dumb` omit table borders; IDs and URLs are wrapped rather than truncated. Human-output color is enabled by default, including redirected output; use the global `--no-color` flag to disable it. Errors and notices remain on stderr. Clap help/argument validation retain their native formatting, and the interactive picker remains managed by `fzf`.
+
+`--json` emits structured output without styling; watch emits newline-delimited snapshots. Watch refreshes sequentially every three seconds after each completed refresh and emits a stale marker then exits on failure. Announcements use stderr only and are controlled by `--notices=auto|always|never` / `BOOTLEG_NOTICES`. Auto displays them only on interactive stderr outside JSON mode. Errors are never suppressed. Bootstrap is best effort (two seconds), once per network invocation; offline commands do not bootstrap.
 
 ## CLI development and tests
 

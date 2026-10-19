@@ -87,11 +87,11 @@ mod tests {
         .unwrap();
         let mut projects = vec![response.project];
         let org = projects[0].org_id.clone();
-        let id = projects[0].project_id;
-        assert!(select_project(&projects, &org, id).is_ok());
-        assert!(select_project(&projects, &org, "99999".parse().unwrap()).is_err());
-        assert!(select_project(&projects, &bootleg_core::OrgId::new(), id).is_err());
-        assert!(select_project(&[], &org, id).is_err());
+        let id = projects[0].project_id.clone();
+        assert!(select_project(&projects, &org, id.clone()).is_ok());
+        assert!(select_project(&projects, &org, bootleg_core::ProjectId::new()).is_err());
+        assert!(select_project(&projects, &bootleg_core::OrgId::new(), id.clone()).is_err());
+        assert!(select_project(&[], &org, id.clone()).is_err());
         projects[0].active = false;
         assert!(select_project(&projects, &org, id).is_err());
     }

@@ -1,6 +1,8 @@
 //! Human-readable discovery output. JSON continues to use the API DTOs unchanged.
+pub mod style;
 use crate::domain::terminal_text;
 use bootleg_core::{OrgId, ProjectId, api::*};
+use style::{Renderer, Tone};
 
 pub fn identity(identity: &IdentityResponse) -> String {
     identity_with_color(identity, false)
@@ -22,25 +24,19 @@ pub fn identity_with_color(identity: &IdentityResponse, color: bool) -> String {
             ),
         ),
     ];
-    let width = rows
-        .iter()
-        .map(|(_, value)| value.chars().count())
-        .max()
-        .unwrap_or(0);
-    let border = format!("+-----------------+-{}-+\n", "-".repeat(width));
-    let mut table = border.clone();
-    for (label, value) in rows {
-        let label = format!("{label:<15}");
-        let label = if color {
-            format!("\x1b[1;36m{label}\x1b[0m")
-        } else {
-            label
-        };
-        let padding = " ".repeat(width - value.chars().count());
-        table.push_str(&format!("| {label} | {value}{padding} |\n"));
+    Renderer {
+        color,
+        ..Renderer::stdout()
     }
-    table.push_str(&border);
-    table
+    .panel(
+        "Signed-in user",
+        &rows
+            .iter()
+            .map(|(label, value)| format!("{label}: {value}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Tone::Info,
+    )
 }
 
 fn ordinal_suffix(day: &str) -> &'static str {
@@ -54,48 +50,50 @@ fn ordinal_suffix(day: &str) -> &'static str {
 
 pub fn organizations(items: &[Organization], current: Option<&OrgId>) -> String {
     if items.is_empty() {
-        return "No organizations found.\n".into();
+        return Renderer::stdout().panel("Organizations", "No organizations found.", Tone::Info);
     }
-    let mut text = String::from("  ID\tNAME\tROLE\n");
+    let mut rows = Vec::new();
     for item in items {
-        let marker = if current == Some(&item.org_id) {
-            "*"
-        } else {
-            " "
-        };
         let role = match item.role {
             OrgRole::Owner => "owner",
             OrgRole::Admin => "admin",
             OrgRole::Member => "member",
         };
-        text.push_str(&format!(
-            "{marker} {}\t{}\t{role}\n",
-            item.org_id,
-            terminal_text(item.name.as_str())
-        ));
+        rows.push(vec![
+            item.org_id.to_string(),
+            terminal_text(item.name.as_str()),
+            role.into(),
+        ]);
     }
-    text
+    Renderer::stdout().table_with_selection(
+        "Organizations",
+        &["ID", "Name", "Role"],
+        rows,
+        items.iter().position(|item| current == Some(&item.org_id)),
+    )
 }
 
 pub fn projects(items: &[Project], current: Option<ProjectId>) -> String {
     if items.is_empty() {
-        return "No projects found.\n".into();
+        return Renderer::stdout().panel("Projects", "No projects found.", Tone::Info);
     }
-    let mut text = String::from("  ID\tNAME\tSTATUS\n");
+    let mut rows = Vec::new();
     for item in items {
-        let marker = if current == Some(item.project_id) {
-            "*"
-        } else {
-            " "
-        };
         let status = if item.active { "active" } else { "inactive" };
-        text.push_str(&format!(
-            "{marker} {}\t{}\t{status}\n",
-            item.project_id,
-            terminal_text(item.name.as_str())
-        ));
+        rows.push(vec![
+            item.project_id.to_string(),
+            terminal_text(item.name.as_str()),
+            status.into(),
+        ]);
     }
-    text
+    Renderer::stdout().table_with_selection(
+        "Projects",
+        &["ID", "Name", "Status"],
+        rows,
+        items
+            .iter()
+            .position(|item| current.as_ref() == Some(&item.project_id)),
+    )
 }
 
 #[cfg(test)]
@@ -104,6 +102,7 @@ mod tests {
 
     #[test]
     fn discovery_output_marks_selection_and_handles_empty_results() {
+        style::configure(true);
         let response: ProjectTokenResponse = serde_json::from_str(include_str!(
             "../../bootleg-core/fixtures/v1/project-token.json"
         ))
@@ -115,17 +114,27 @@ mod tests {
             role: OrgRole::Member,
         };
         assert!(
-            organizations(std::slice::from_ref(&org), Some(&org.org_id))
-                .contains(&format!("* {}", org.org_id))
+            organizations(std::slice::from_ref(&org), Some(&org.org_id)).contains(&format!(
+                "Current: {} ({})",
+                org.name.as_str(),
+                org.org_id
+            ))
         );
         assert!(organizations(&[org], None).contains("member"));
         project.active = false;
-        let text = projects(std::slice::from_ref(&project), Some(project.project_id));
-        assert!(text.contains(&format!("* {}", project.project_id)));
+        let text = projects(
+            std::slice::from_ref(&project),
+            Some(project.project_id.clone()),
+        );
+        assert!(text.contains(&format!(
+            "Current: {} ({})",
+            project.name.as_str(),
+            project.project_id
+        )));
         assert!(text.contains("inactive"));
         assert!(!text.contains(response.project_token.expose_secret()));
-        assert_eq!(projects(&[], None), "No projects found.\n");
-        assert_eq!(organizations(&[], None), "No organizations found.\n");
+        assert!(projects(&[], None).contains("No projects found."));
+        assert!(organizations(&[], None).contains("No organizations found."));
     }
 
     #[test]
@@ -161,15 +170,12 @@ mod tests {
         }))
         .unwrap();
         let text = super::identity(&identity);
-        assert!(text.contains("| Email           | user@example.test"));
+        assert!(text.contains("Email: user@example.test"));
         assert!(text.contains("January 1st, 2030 00:00:00 UTC"));
         assert!(!text.contains('\u{001b}'));
         let colored = identity_with_color(&identity, true);
-        assert!(colored.contains("\x1b[1;36mEmail  "));
-        assert_eq!(
-            colored.replace("\x1b[1;36m", "").replace("\x1b[0m", ""),
-            text
-        );
+        assert!(colored.contains('\x1b'));
+        assert!(colored.contains("Email: user@example.test"));
         assert!(!text.contains("Credential:"));
         assert!(!text.contains(&identity.cli_credential_id.to_string()));
     }

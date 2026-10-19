@@ -54,15 +54,37 @@ mod tests {
     #[test]
     fn init_and_interactive_config_share_identity_only_completion() {
         let origin = ApiOrigin::parse("https://example.test", false).unwrap();
-        let config = RepositoryConfig::initialize(&origin, None, "42".parse().unwrap());
+        let config = RepositoryConfig::initialize(
+            &origin,
+            None,
+            "project_6m8x91b0349vbrq30fxn997q5s".parse().unwrap(),
+        );
         let output = serde_json::to_value(&config).unwrap();
-        assert_eq!(output["project_id"], "42");
+        assert_eq!(output["project_id"], "project_6m8x91b0349vbrq30fxn997q5s");
         assert_eq!(output["api_url"], "https://example.test/");
         assert!(output.get("name_env").is_none());
-        let old: RepositoryConfig =
-            serde_json::from_str(r#"{"name_env":"POD_NAME","project_id":"42"}"#).unwrap();
+        let old: RepositoryConfig = serde_json::from_str(
+            r#"{"name_env":"POD_NAME","project_id":"project_6m8x91b0349vbrq30fxn997q5s"}"#,
+        )
+        .unwrap();
         assert!(serde_json::to_value(old).unwrap().get("name_env").is_none());
     }
+    #[test]
+    fn typed_project_id_round_trips_and_numeric_ids_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".bootleg.json");
+        let origin = ApiOrigin::parse("https://example.test", false).unwrap();
+        let id: ProjectId = "project_6m8x91b0349vbrq30fxn997q5s".parse().unwrap();
+        RepositoryConfig::initialize(&origin, None, id.clone())
+            .save(&path)
+            .unwrap();
+        assert_eq!(RepositoryConfig::load(&path).unwrap().project_id, Some(id));
+        for json in [r#"{"project_id":42}"#, r#"{"project_id":"42"}"#] {
+            std::fs::write(&path, json).unwrap();
+            assert!(RepositoryConfig::load(&path).is_err());
+        }
+    }
+
     #[test]
     fn precedence_and_no_secret_fields() {
         let c = RepositoryConfig {
