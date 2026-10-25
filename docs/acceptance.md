@@ -1,111 +1,150 @@
-# Partial registration acceptance checkpoint
+# Registration acceptance checkpoint
 
 ## Reproduce
 
-Sibling checkout layout is required: `bootleg-{core,cli,smuggler,web}` under one parent.
-Tested dependency revisions (not floating branch recommendations):
+Use sibling checkouts `bootleg-{core,cli,smuggler,web}` under one parent. The harness
+checks exact compatible dependency revisions in `scripts/acceptance-revisions.json`
+before building; it never checks out/reset repositories for you:
 
 | Repository | Revision |
 | --- | --- |
 | core | `05144d6e047fc5c88afd58143d9f6771fd262af7` |
-| web | `068d0a680736fb95791aa1e7262ac427fd3a6536` |
+| web | `515974dcdfcc03f60ab4e0ca488726860f49c126` |
 | smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
-| CLI baseline | `e0bffa6` plus this Docker/browser acceptance commit |
+| CLI | this acceptance commit, built on `fa89a4d` |
 
-Prerequisites: Rust/Cargo, Docker daemon, Python 3 (standard library only), Node,
-`fzf`, macOS or Unix PTY support. The optional `--docker` scenario currently requires
-macOS Docker Desktop's `host.docker.internal` routing; it rejects unsupported hosts
-rather than claiming success. Install web's locked Node dependencies and Chromium:
+Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
+recorded in the report. Untracked handoff documents are preserved, not removed.
+
+Prerequisites: Rust/Cargo, **cargo-nextest**, Docker daemon, Python 3 (standard library
+only), Node, fzf, and Unix PTYs. Full Docker/kind acceptance currently supports
+**macOS Docker Desktop** with `host.docker.internal`; unsupported hosts fail the
+explicit request rather than being counted as passing. Install `kind`, `kubectl`,
+and web's locked Node dependencies plus Chromium:
 
 ```sh
 cd bootleg-web
 npm ci
 npx playwright install chromium
 cd ../bootleg-cli
-python3 scripts/test-device-auth.py
-# On macOS Docker Desktop, include isolated Docker network lifecycle:
-python3 scripts/test-device-auth.py --docker
+# Full registration acceptance, including isolated kind and Docker:
+python3 scripts/test-device-auth.py --kind
 ```
 
-The last command builds all native executables with `--locked`. It deliberately
-does not run web's `just rebuild`, which recreates development services. No existing
-project, service or cluster is touched. Stores bind randomized loopback ports;
-Docker names carry a unique run prefix. Account/project data lives only in the
-throwaway PostgreSQL container. Credentials enter agents via runtime environment
-and Chromium via stdin, never arguments, images or build arguments. Account setup
-uses real HTTP forms, then a narrowly scoped disposable DB email-verification
-fixture; email delivery/verification itself is not an acceptance assertion.
+`--kind` implies `--docker`. Tested with kind v0.33.0; the node image is pinned to
+`kindest/node:v1.32.11@sha256:5fc52d52a7b9574015299724bd68f183702956aa4a2116ae75a63cb574b35af8`.
+Kind's experimental Docker-network override keeps nodes on this run's owned
+network. Its use is an explicit compatibility limitation, not a production deployment
+recommendation. The syscall-test image installs strace from Debian repositories;
+network access for tool/image acquisition is required. Docker build cache and base
+images are retained, not pruned. One free Docker address-pool allocation is needed;
+if exhausted, do not delete unrelated networks. Avoid concurrent store suites on
+hosts with limited address pools.
 
-## Results
+Smaller runs explicitly skip prerequisite-dependent scenarios:
 
-Executed successfully on macOS with real local sockets, Chromium, CLI, native
-smuggler and web. No canned HTTP/WebSocket servers or protocol-client replacements.
+```sh
+python3 scripts/test-device-auth.py            # skips Docker/syscall proof and kind
+python3 scripts/test-device-auth.py --docker   # skips kind
+```
+
+All variants build the actual CLI/web/smuggler binaries with `--locked`. They do not
+run web's `just rebuild`, which would recreate development services. Stores bind
+randomized loopback ports. Accounts and projects exist only in throwaway PostgreSQL
+18. Account setup uses actual HTTP registration forms, then narrowly scoped DB
+email-verification fixtures; email verification/delivery is not asserted. Device
+approval/denial uses Chromium UI. Agent credentials enter only at runtime; agents
+never inherit DB credentials or web signing keys. Tokens are absent from arguments,
+images and build arguments. Kubernetes uses runtime Secret references; kubeconfig
+and secret source files live in the private temporary home.
+
+## Scenario results
+
+`--kind` completed successfully on macOS. **Registration acceptance is green at this
+checkpoint**, with the evidence levels below. This does not claim capacity/load
+validation, a complete web CI pass, file synchronization or diff preview.
 
 | Scenario | Result / evidence level |
 | --- | --- |
-| CLI login approved through UI, pending long poll, denial | PASS — CLI + Chromium |
-| Credential permissions and no token in login output | PASS — executable/filesystem |
-| Interactive config, cancellation, multiple orgs/projects | PASS — CLI + real fzf PTY |
+| Login approval, pending long poll and denial | PASS — actual CLI + Chromium UI |
+| Private credential files / no token in login output | PASS — executable/filesystem assertions |
+| Interactive configuration, cancellation, multiple orgs/projects | PASS — actual CLI + fzf PTY |
 | CLI project creation and explicit rotation | PASS — executable + real web/stores |
-| Expired credential recovery and logout/revocation | PASS — CLI + Chromium; expiry set in disposable DB |
-| Duplicate labels remain distinct | PASS — two native agents + CLI |
-| Unknown and dirty baseline projection | PASS — native agents + CLI DTO assertions, not browser rendering |
-| Process restart changes ContainerId | PASS — native smuggler restart + CLI |
-| Rotation removes connected presence by next checks | PASS — native agents + CLI; 65-second observation bound |
-| Old key rejects new agent | PASS — native executable; no new retained record after three seconds |
-| Authorization loss preserves supervised application | PASS — application file timestamp continues advancing |
-| Cross-org isolation | SKIP — not implemented in this harness |
-| Plain Docker discovery in CLI/browser | PASS with `--docker` — actual image, CLI and Chromium |
-| Kind replicas / two instrumented containers per pod | SKIP — not implemented; no cluster resources created |
-| Network interruption / reconnect identity and session replacement | PASS with `--docker` — disconnect/reconnect dedicated Docker network; same ContainerId, new SmugglerSessionId; offline within 45-second lease plus 10-second observation allowance |
-| Old-session heartbeat/disconnect fencing | SKIP — no executable acceptance here |
-| Project deactivation | PASS — disposable DB change; agents offline by next check, new agent rejected, application continues |
-| Control-plane outage | PASS — kill/restart owned web process; native applications keep updating files |
-| Disabled zero-network mode | SKIP — not implemented here |
-| Browser SSE and text-only labels | PASS — actual Chromium, live snapshots before/after agent changes, no refresh or request mocks |
-| Browser stale data and reconnect | PASS — actual server outage closes sockets; retained rows marked stale, automatic recovery |
-| Browser permission loss | PASS — disposable account deactivated while stream active; rows cleared and results hidden |
-| Browser hidden tabs | SKIP — not implemented |
+| Expired credentials, logout/revocation and recovery | PASS — CLI + Chromium; expiry set in disposable DB |
+| Cross-org isolation | PASS — two real accounts/CLI credentials, disjoint org discovery, bidirectional project discovery denial, unauthorized rotation returns not_found |
+| Plain Docker agent in CLI and browser | PASS with --docker — actual built image + real discovery |
+| Two kind replicas and two instrumented containers per pod | PASS with --kind — two pods, app/worker per pod; four distinct ContainerIds, Downward API metadata and labels matched to actual pod UIDs |
+| Duplicate display labels | PASS — two native agents remain distinct |
+| Unknown/dirty baselines | PASS — native metadata in CLI and actual Chromium-rendered baseline cells |
+| Network interruption/offline deadline | PASS with --docker — dedicated network disconnect, offline within 45-second lease + 10-second observation allowance |
+| Reconnect identity/session | PASS with --docker — same ContainerId and different SmugglerSessionId after network reconnect |
+| Process restart identity | PASS — real native smuggler restart creates a new ContainerId |
+| Old-session heartbeat/disconnect fencing | PASS — supplemental real-store domain/adapter and actual WebSocket-client tests; **not smuggler executable evidence** |
+| Rotation rejects new and existing old-key agents | PASS — CLI rotation, executable agents become offline within 25-second observation bound; new old-key process creates no record after three seconds |
+| Deactivation rejects new/existing agents | PASS — disposable DB mutation, actual agents offline within 25 seconds; new inactive-project agent creates no record |
+| Control-plane outage preserves application | PASS — kill/restart only owned web process; application file timestamps continue advancing |
+| Authorization loss preserves application | PASS — application timestamp continues advancing after rotation/deactivation |
+| Disabled mode no agent network I/O | PASS with --docker — strace across actual Linux process tree records zero network syscalls; enabled positive control attempts network I/O; both preserve application exit 23 |
+| Browser SSE without manual refresh | PASS — real Chromium DOM changes on actual agent changes |
+| Hidden tabs disconnect/reconnect | PASS — native document visibility with focus emulation disabled, CDP observes old SSE request ending and a new request on foreground |
+| Interrupted stream marks retained data stale | PASS — actual web process outage; rows retained, stale status, automatic recovery |
+| Permission loss clears retained data | PASS — disposable account deactivated during established stream; rows removed/results hidden |
+| Agent labels rendered as text | PASS — literal img/onerror label, no injected img/b DOM nodes |
 
-The harness exits nonzero on assertion failure; zero means **only the implemented
-subset passed**, not full registration acceptance. The final console report always
-lists the missing groups. Earlier development attempts exposed a changed CLI login
-heading, fzf's asynchronous filter timing, and a helper-name collision; these were
-fixed before the successful run. Subsequent testing replaced a fixed fzf filter sleep
-with observation of the filtered result count while draining the PTY. A Chromium
-offline toggle did not reliably interrupt an established SSE stream, so outage
-checks now terminate the actual disposable web process instead. Project deactivation
-preserves member read visibility; browser eligibility loss is tested separately by
-deactivating the disposable account.
+The supplemental fencing suite runs **after** executable/browser scenarios, against
+new test databases in the same disposable PostgreSQL container and the same owned
+Valkey instance. The native web process is stopped first. The command is:
 
-## Diagnostics and cleanup
+```sh
+cargo run --locked -p bootleg-infrastructure --example test_database -- --presence
+```
 
-Console output is the concise report. The current successful Docker run's build/report
-log is `/tmp/bootleg-acceptance-docker.log` (local ephemeral artifact). Every run also
-writes `.pi/acceptance/bootleg-acceptance-<unique>/report.json`: an owner-only,
-allowlisted scenario report with repository revisions, failure class (never raw error
-text), cleanup status and explicit skips. It remains after temporary resources are
-removed. Not-reached scenarios are not passed. Reports always state
-`registration_complete: false` while mandatory scenarios remain unimplemented.
-Raw web/agent logs and credentials stay inside the temporary home and are deleted
-on exit. Failed-run console captures may include UI/API/DB diagnostics and must be
-treated as private; only the allowlisted JSON is a sanitized diagnostic artifact.
+The harness supplies isolated environment settings; do not run it with development
+store URLs. It exercises independent store adapters and real WebSocket connections,
+not a canned transport server. It intentionally is not relabeled as executable-agent
+acceptance.
 
-A `finally` block terminates children (kill fallback), removes only owned container
-IDs and their anonymous volumes, and the temporary-directory context removes
-credentials/logs. SIGTERM is converted into normal exception cleanup; SIGINT also
-unwinds. SIGKILL/host failure cannot be cleaned synchronously: inspect only the
-printed/named `bootleg-acceptance-*` resources, never prune shared Docker state.
-Cleanup errors cause failure. The optional Docker scenario builds from a temporary
-source allowlist (no sibling secrets or `.git` in its build context), injects environment
-values at runtime, and removes only its uniquely tagged image and named network.
-Docker build cache/base images remain available, not pruned. No kind cluster is
-created or selected.
+## Diagnostics, failures and cleanup
 
-## Remaining gate
+Each run prints an owner-only allowlisted JSON report path:
+`.pi/acceptance/bootleg-acceptance-<unique>/report.json`. It records scenario status,
+repository revisions, tracked-edit flags, failure class and cleanup status. It never
+persists raw exceptions, cookies, keys, UI HTML or secret-bearing DTOs. Not-reached
+scenarios are skipped, not passed. `registration_complete` is true only when every
+scenario passed and cleanup succeeded. A partial run may exit zero with explicit
+skips; automation requiring full registration must check that field or use `--kind`.
 
-Full registration acceptance is **not green**. Presence quota edge cases, real-store
-concurrent admission, snapshot contention measurement, supported capacity numbers,
-coordinated CI pinning, and remaining documentation reconciliation are still open.
-No quota behavior, authoritative state, remote mutation, file transfer or diff
-preview is changed by this checkpoint.
+Raw web/agent/strace logs and credentials stay inside the temporary home and are
+deleted. Failed-run console captures are private until reviewed. Local successful
+build/report log: `/tmp/bootleg-acceptance-kind.log`; the sanitized JSON is the durable
+handoff artifact.
+
+Cleanup terminates owned children, removes only owned container IDs/volumes, deletes
+only the newly named kind cluster using its private kubeconfig, then removes its
+network and uniquely tagged images. The temporary home removes kubeconfig, secrets,
+Chromium profiles and logs. SIGTERM/SIGINT unwind cleanup; SIGKILL/host failure cannot
+be cleaned synchronously. Never prune shared Docker state or delete resources using
+current-context. The existing `bootleg` cluster was left untouched and remained
+listed after successful runs.
+
+## Findings and limitations
+
+- Cross-org token rotation exposed existing hidden IDs through forbidden responses.
+  Web `515974d` fixes this; visible non-manager members still receive forbidden.
+  Real-store tests verify hidden/member/deleted/inactive-org outcomes and no key change.
+- Full Chromium is launched and attached with Playwright `noDefaults: true`. Default
+  focus emulation falsely keeps background pages visible; no visibility property or
+  EventSource is mocked. Hidden streams are verified through real CDP network events.
+- Project deactivation preserves read visibility. Account eligibility loss is a
+  separate browser authorization test, not inferred from project deactivation.
+- One development run exhausted Docker's default address pool while another disposable
+  store suite ran concurrently. Neither suite pruned unrelated networks. The harness
+  no longer reports failed network creation as a failed removal of a nonexistent network.
+- `just test` in web: 109 passed, 61 skipped. Full web integration: infrastructure
+  43 passed; account/view suite 8 passed, 3 failed on unchanged dashboard markup
+  expectations; later security suite not reached. Workspace formatting check also
+  reports existing drift. See `../bootleg-web/docs/registration-acceptance.md`.
+- Phase 2 quota/concurrent-admission regressions and measured snapshot capacity remain
+  outstanding. No capacity claim is established by these few-agent acceptance tests.
+- Coordinated CI and remaining core/smuggler documentation reconciliation are open.
+  Diff preview is not implemented; no transfer or remote mutation was added.

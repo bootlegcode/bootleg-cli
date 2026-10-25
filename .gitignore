@@ -1,2 +1,4 @@
 /target
 .local-env
+/.pi/acceptance/
+/scripts/__pycache__/

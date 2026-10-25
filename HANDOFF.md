@@ -1,6 +1,6 @@
 # CLI workstream handoff
 
-Scope: `bootleg-cli` only. No sibling repository/shared contract edits. Core checkpoint: `05144d6e047fc5c88afd58143d9f6771fd262af7` (path dependency; shared fixtures read-only).
+CLI surface and coordinated acceptance handoff. Cross-org acceptance also required web fix `515974d`; no shared wire contract changes. Core checkpoint: `05144d6e047fc5c88afd58143d9f6771fd262af7` (path dependency; shared fixtures read-only).
 
 ## Current surface
 
@@ -33,7 +33,7 @@ Earlier CLI implementation also added/changed `Cargo.toml`, `Cargo.lock`, `src/d
 
 1. `python3 scripts/test-device-auth.py` now builds CLI/web/smuggler, provisions disposable real stores, and exercises Chromium approval/denial, real PTY fzf configuration, expired credentials and logout. See `docs/acceptance.md` for exact revisions, prerequisites and scenario results.
 2. CLI project create/rotation and native smuggler discovery, duplicate labels, baseline metadata, restart identity and rotation invalidation passed. Real Chromium now verifies SSE updates, text-only labels, stale data/recovery on actual web outage, and eligibility-loss clearing. Project deactivation and continued application file updates are checked. `--docker` (macOS Docker Desktop) passed real image discovery and network disconnect/reconnect with identity preservation and session replacement. These are executable acceptance checks, not protocol-client substitutes. Owner-only sanitized scenario reports remain in `.pi/acceptance/`.
-3. Full registration acceptance is still incomplete: kind, cross-org isolation, stale-session callbacks, disabled-network proof, browser hidden tabs, and ambiguous mutations remain unproven here. Quota/capacity work and diff preview have not started; the diff gate remains closed.
+3. Full `--kind` registration acceptance now passes: private kind cluster with two two-container replicas, two-account cross-org isolation, native browser hidden-tab SSE lifecycle, and Linux strace disabled-mode proof with enabled positive control. Old-session fencing is supplemental real-store/domain and actual WebSocket-client evidence, explicitly not executable-agent evidence. Compatible sibling revisions are enforced by `scripts/acceptance-revisions.json`. Quota/capacity work, ambiguous mutation failure testing, coordinated CI and diff preview remain outstanding. Broader web integration has three dashboard-markup assertion failures; do not claim a full CI pass. See `docs/acceptance.md`.
 4. Existing coordinator clarification: the frozen contract requires agent plaintext-development opt-in but does not specify its flag/env spelling. Deployment examples intentionally do not invent a shared setting.
 
 Secure file fallback remains Unix-only; no OS keychain adapter claimed. Human results are structured text; watch uses NDJSON in JSON mode and emits a stale marker on refresh failure before exiting. Core remains a coordinated sibling dependency, not a published release.

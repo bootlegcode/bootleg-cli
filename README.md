@@ -108,14 +108,14 @@ Real-server tests are opt-in, using the actual web service/backing stores and re
 cargo test --test real_server -- --ignored
 ```
 
-Run the repeatable partial registration acceptance test with Docker, Python 3, `fzf`, Node, and the sibling core/web/smuggler checkouts (see [tested revisions and results](docs/acceptance.md)):
+Run repeatable registration acceptance with Docker, Python 3, `fzf`, Node, cargo-nextest, and the sibling core/web/smuggler checkouts (see [pinned revisions, prerequisites and results](docs/acceptance.md)):
 
 ```sh
 python3 scripts/test-device-auth.py
-# Optional Docker Desktop lifecycle coverage (currently macOS only):
-python3 scripts/test-device-auth.py --docker
+# Full acceptance on macOS Docker Desktop; requires kind and kubectl:
+python3 scripts/test-device-auth.py --kind
 ```
 
 This builds all three binaries and starts disposable PostgreSQL, Valkey, Mailpit, real web, and native smuggler processes. Chromium approves/denies CLI login using the actual UI. The suite also exercises real `fzf` under a PTY, project creation/rotation, and native agent discovery. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used. OS browser dispatch is not tested.
 
-This is **partial acceptance**, not the full registration milestone. Real Chromium SSE, outage/stale recovery, permission loss, and project deactivation are covered; `--docker` additionally tests discovery and network-loss/reconnect identity. Kind, hidden tabs, cross-org isolation and other remaining scenarios are explicitly skipped. Sanitized JSON reports are retained under `.pi/acceptance/`. Diff preview remains gated. See [acceptance results](docs/acceptance.md).
+Full `--kind` registration acceptance passed, including Docker/kind discovery, syscall-level disabled-mode checks, cross-org isolation, and real Chromium SSE/hidden-tab behavior. Supplemental real-store/WebSocket fencing tests are explicitly distinguished from executable-agent evidence. Default runs skip Docker/kind-dependent scenarios. The harness verifies compatible sibling revisions before building and retains sanitized JSON reports under `.pi/acceptance/`. Capacity hardening, CI and diff preview remain outstanding. See [acceptance results](docs/acceptance.md).

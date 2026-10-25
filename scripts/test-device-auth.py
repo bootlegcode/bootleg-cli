@@ -26,6 +26,9 @@ import time
 import urllib.parse
 import urllib.request
 
+from acceptance_kind import KindAcceptance
+from acceptance_network import verify_disabled
+
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT.parent / "bootleg-web"
 SMUGGLER = ROOT.parent / "bootleg-smuggler"
@@ -45,7 +48,17 @@ def free_port():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", action="store_true", help="exercise Docker Desktop agent network lifecycle (macOS)")
+    parser.add_argument("--kind", action="store_true", help="also create an isolated kind cluster (implies --docker)")
+    parser.add_argument("--allow-dirty-dependencies", action="store_true", help="explicitly test tracked edits at the pinned sibling revisions")
     options = parser.parse_args()
+    pins = json.loads((ROOT / "scripts/acceptance-revisions.json").read_text())
+    for name, expected in pins.items():
+        repo = ROOT.parent / name
+        assert run("git", "rev-parse", "HEAD", cwd=repo) == expected, f"{name}: checkout must match scripts/acceptance-revisions.json (no automatic checkout)"
+        assert options.allow_dirty_dependencies or not run("git", "status", "--porcelain", "--untracked-files=no", cwd=repo), f"{name}: tracked edits require --allow-dirty-dependencies"
+    if options.kind:
+        options.docker = True
+        assert shutil.which("kind") and shutil.which("kubectl"), "install kind and kubectl"
     if options.docker and os.uname().sysname != "Darwin":
         parser.error("--docker currently requires macOS Docker Desktop host.docker.internal routing")
     assert shutil.which("fzf"), "install fzf"
@@ -65,7 +78,8 @@ def main():
         "kind", "cross_org_isolation", "stale_session_callbacks", "disabled_network", "hidden_tabs")})
     containers = []
     children = []
-    docker_image = docker_network = None
+    docker_image = docker_network = trace_image = None
+    kind_cluster = None
     with tempfile.TemporaryDirectory(prefix="bootleg-cli-e2e-") as directory:
         home = Path(directory)
         env = {k: v for k, v in os.environ.items() if not k.startswith(
@@ -78,7 +92,7 @@ def main():
                 address = run("docker", "port", cid, str(port)).splitlines()[0]
                 return cid, address.rsplit(":", 1)[1]
 
-            pg, pgport = container("postgres:17-alpine", 5432,
+            pg, pgport = container("postgres:18-alpine", 5432,
                                    "-e", "POSTGRES_PASSWORD=isolated-test", "-e", "POSTGRES_DB=cli_test")
             _, redisport = container("valkey/valkey:8-alpine", 6379)
             _, mailport = container("axllent/mailpit:latest", 1025)
@@ -114,16 +128,18 @@ def main():
             cookies = http.cookiejar.CookieJar()
             browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
 
-            def browser_decision(path, name, decision="approve"):
-                subprocess.run(["node", str(ROOT / "scripts/approve-device.cjs")],
-                               input=json.dumps(dict(origin=origin, path=path, name=name,
-                                   decision=decision, cookies=[dict(name=c.name, value=c.value)
-                                                             for c in cookies])),
-                               text=True, check=True, timeout=40)
+            def browser_decision(path, name, decision="approve", jar=None):
+                approval = subprocess.Popen(["node", str(ROOT / "scripts/approve-device.cjs")],
+                                            stdin=subprocess.PIPE, stdout=log, stderr=log, text=True)
+                children.append(approval)
+                approval.communicate(json.dumps(dict(origin=origin, path=path, name=name,
+                    decision=decision, cookies=[dict(name=c.name, value=c.value)
+                                                for c in (cookies if jar is None else jar)])), timeout=40)
+                assert approval.returncode == 0, "Chromium device decision failed"
 
-            def page(path, fields=None):
+            def page(path, fields=None, opener=None):
                 data = None if fields is None else urllib.parse.urlencode(fields).encode()
-                with browser.open(origin + path, data=data, timeout=30) as response:
+                with (opener or browser).open(origin + path, data=data, timeout=30) as response:
                     return response.read().decode()
 
             def csrf(html):
@@ -145,22 +161,27 @@ def main():
             env["PATH"] = str(tools) + os.pathsep + env["PATH"]
             base = [str(BIN), "--api-url", origin, "--allow-http", "--notices=never", "--no-color", "--json"]
 
-            def cli(*args, ok=True):
-                result = subprocess.run(base + list(args), cwd=home, env=env, capture_output=True, text=True, timeout=35)
+            def cli(*args, ok=True, settings=None, directory=None):
+                result = subprocess.run(base + list(args), cwd=directory or home, env=settings or env, capture_output=True, text=True, timeout=35)
                 assert (result.returncode == 0) == ok, result.stderr + result.stdout
                 return json.loads(result.stdout)
 
-            def start_login(*args):
-                proc = subprocess.Popen(base + list(args), cwd=home, env=env,
+            def start_login(*args, settings=None, directory=None):
+                proc = subprocess.Popen(base + list(args), cwd=directory or home, env=settings or env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 children.append(proc)
                 deadline = time.monotonic() + 30
-                line = ""
-                while "Approve Bootleg CLI" not in line:
-                    assert time.monotonic() < deadline and proc.poll() is None, "login did not request approval"
-                    line = proc.stderr.readline()
-                url = re.search(r"at (\S+) using code", line)[1]
-                code = line.strip().rsplit(" ", 1)[1]
+                transcript = b""
+                while True:
+                    assert time.monotonic() < deadline, "login approval deadline"
+                    if select.select([proc.stderr], [], [], .1)[0]:
+                        chunk = os.read(proc.stderr.fileno(), 65536)
+                        assert chunk, "login exited before requesting approval"
+                        transcript += chunk
+                    match = re.search(rb"Approve Bootleg CLI at (\S+) using code (\S+)\n", transcript)
+                    if match:
+                        url, code = (value.decode() for value in match.groups())
+                        break
                 return proc, urllib.parse.urlsplit(url).path, code
 
             proc, path, code = start_login("login", "--no-browser", "--device-name", "Acceptance laptop")
@@ -188,6 +209,35 @@ def main():
             assert token_file.stat().st_mode & 0o777 == 0o600
             projects = cli("projects", "list", "--org-id", org)
             assert len(projects) == 1
+
+            # A second real account has no membership in the first account's organizations.
+            outsider_home = home / "outsider"
+            outsider_home.mkdir(mode=0o700)
+            outsider_env = dict(env, HOME=str(outsider_home))
+            outsider_cookies = http.cookiejar.CookieJar()
+            outsider_browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(outsider_cookies))
+            html = page("/register", opener=outsider_browser)
+            page("/register", dict(csrf=csrf(html), email="outsider@example.test", password="test-only other password", timezone="UTC"), opener=outsider_browser)
+            run("docker", "exec", pg, "psql", "-U", "postgres", "-d", "cli_test", "-c",
+                "UPDATE users SET verified=true, email_verified_at=now(), email_verification_issued_at=NULL, email_verification_expires_at=NULL WHERE email='outsider@example.test'")
+            proc, path, _ = start_login("login", "--no-browser", settings=outsider_env, directory=outsider_home)
+            browser_decision(path, "Outsider laptop", jar=outsider_cookies)
+            stdout, stderr = proc.communicate(timeout=30)
+            assert proc.returncode == 0, "outsider login failed"
+
+            def outsider(*args, **kwargs):
+                return cli(*args, settings=outsider_env, directory=outsider_home, **kwargs)
+
+            outsider_orgs = outsider("orgs", "list")
+            assert len(outsider_orgs) == 1 and outsider_orgs[0]["org_id"] != org
+            outsider_project = outsider("projects", "create", "Private outsider project", "--org-id",
+                                       outsider_orgs[0]["org_id"], "--token-file", str(outsider_home / "project-token"))
+            assert cli("instances", "list", "--project-id", outsider_project["project_id"], ok=False)["error"]["code"] == "not_found"
+            assert outsider("instances", "list", "--project-id", projects[0]["project_id"], ok=False)["error"]["code"] == "not_found"
+            assert outsider("project", "token", "rotate", "--project-id", projects[0]["project_id"],
+                            "--confirm", "--token-file", str(outsider_home / "forbidden-token"), ok=False)["error"]["code"] == "not_found"
+            outsider("logout")
+            results["cross_org_isolation"] = "passed: two actual CLI/browser logins, disjoint orgs, bidirectional discovery and rotation denial"
 
             def configure(approve=False, cancel=False, multiple=False):
                 master, slave = pty.openpty()
@@ -258,7 +308,8 @@ def main():
                 response = presence_browser.stdout.readline()
                 assert response and json.loads(response).get("ok"), "browser presence check failed: " + action
 
-            browser_check("open", origin=origin, path=f"/app/projects/{org}/{projects[0]['project_id']}",
+            browser_check("open", origin=origin, profile=str(home / "presence-chromium"),
+                          path=f"/app/projects/{org}/{projects[0]['project_id']}",
                           cookies=[dict(name=c.name, value=c.value) for c in cookies])
             # Real native smuggler processes: duplicate labels and distinct identities.
             project_id = projects[0]["project_id"]
@@ -274,7 +325,7 @@ def main():
                     settings.update(BOOTLEG_BUILD_COMMIT="a" * 40, BOOTLEG_BUILD_DIRTY="true")
                 marker = home / f"application-{len(children)}.tick"
                 proc = subprocess.Popen([str(SMUGGLER / "target/debug/smuggler"),
-                                         "--name", "duplicate <b>label</b>", "--", "/bin/sh", "-c",
+                                         "--name", "duplicate <img src=x onerror=alert(1)>", "--", "/bin/sh", "-c",
                                          'while :; do date +%s > "$1"; sleep 1; done', "application", str(marker)],
                                         env=settings, cwd=home, stdout=log, stderr=log)
                 proc.application_marker = marker
@@ -301,9 +352,12 @@ def main():
             items = wait_instances(lambda xs: len(xs) == 2 and all(x["presence"] == "connected" for x in xs))
             assert len({x["container_id"] for x in items}) == 2
             assert {x["build_dirty"] for x in items} == {None, True}
-            browser_check("rows", count=2, connected=2, label="duplicate <b>label</b>")
+            browser_check("rows", count=2, connected=2, label="duplicate <img src=x onerror=alert(1)>", baselines=True)
             results["native_discovery"] = "passed: native executables and CLI"
             results["browser_sse"] = "passed: actual Chromium, real SSE, text-only labels"
+            browser_check("hide")
+            browser_check("show")
+            results["hidden_tabs"] = "passed: native Chromium tab visibility, network-observed SSE close and reconnect"
             # Kill only our disposable control plane: close actual sockets, not synthetic events.
             app.kill()
             app.wait(timeout=10)
@@ -338,8 +392,9 @@ def main():
                 docker_image = resource_prefix + ":agent"
                 run("docker", "build", "-q", "-t", docker_image, "-f",
                     str(context / "bootleg-smuggler/Dockerfile"), str(context))
-                docker_network = resource_prefix + "-network"
-                run("docker", "network", "create", docker_network)
+                network_name = resource_prefix + "-network"
+                run("docker", "network", "create", network_name)
+                docker_network = network_name
                 docker_env = {key: value for key, value in agent_env.items() if key.startswith("BOOTLEG_")}
                 docker_env.update(BOOTLEG_API_URL=origin.replace("127.0.0.1", "host.docker.internal"),
                                   BOOTLEG_INSTANCE_NAME="Docker <b>agent</b>")
@@ -366,14 +421,38 @@ def main():
                 browser_check("rows", count=4, connected=3)
                 results["docker_network_lifecycle"] = "passed: real Docker disconnect/reconnect, CLI and Chromium"
                 print("PASS [Docker agent + CLI + Chromium]: discovery, network-loss expiry, reconnect identity/session")
+                trace_image = resource_prefix + ":trace"
+                verify_disabled(docker_image, trace_image, resource_prefix, home, docker_env, containers, log)
+                results["disabled_network"] = "passed: real Linux executable, strace network syscalls absent when disabled; enabled positive control observed"
+                print("PASS [Linux executable + strace]: disabled no-network syscalls, enabled positive control, application exit status")
             else:
                 results["docker_network_lifecycle"] = "skipped: requires --docker on macOS Docker Desktop"
+                results["disabled_network"] = "skipped: requires --docker and Linux syscall tracing"
                 print("SKIP: Docker network lifecycle (enable --docker on macOS Docker Desktop)")
             retained_count = 4 if options.docker else 3
+            if options.kind:
+                kind_cluster = KindAcceptance(resource_prefix, home, docker_network)
+                pods = kind_cluster.start(docker_image, origin, project_id, token_file)
+                retained_count += 4
+                snapshots = wait_instances(lambda xs: len(xs) == retained_count and
+                                           sum(x["presence"] == "connected" for x in xs) == retained_count - 1, 65)
+                deployed = [x for x in snapshots if (x["runtime"] or {}).get("cluster_name") == resource_prefix]
+                assert len(deployed) == 4 and len({x["container_id"] for x in deployed}) == 4
+                for uid, name in pods.items():
+                    same_pod = [x for x in deployed if x["runtime"]["pod_uid"] == uid]
+                    assert len(same_pod) == 2
+                    assert {x["runtime"]["container_name"] for x in same_pod} == {"app", "worker"}
+                    assert {x["runtime"]["pod_name"] for x in same_pod} == {name}
+                    assert {x["display_name"] for x in same_pod} == {name + "/app", name + "/worker"}
+                browser_check("rows", count=retained_count, connected=retained_count - 1)
+                results["kind"] = "passed: isolated real kind cluster, two pods with app/worker agents each, CLI and Chromium discovery"
+                print("PASS [kind + CLI + Chromium]: two replicas, distinct instrumented containers per pod")
+            else:
+                results["kind"] = "skipped: requires --kind, kind and kubectl"
             rotated = home / "rotated-token"
             cli("project", "token", "rotate", "--confirm", "--token-file", str(rotated))
             assert rotated.read_bytes() != token_file.read_bytes()
-            wait_instances(lambda xs: len(xs) == retained_count and all(x["presence"] == "offline" for x in xs), 65)
+            wait_instances(lambda xs: len(xs) == retained_count and all(x["presence"] == "offline" for x in xs), 25)
             browser_check("rows", count=retained_count, connected=0)
             application_advances(second)
             agent()  # Old token cannot register a new container.
@@ -435,6 +514,19 @@ def main():
             stdout, _ = proc.communicate(timeout=30)
             assert proc.returncode != 0 and json.loads(stdout)["error"]["code"] == "access_denied"
             results["expiry_logout_denial"] = "passed: actual CLI and Chromium"
+            # Supplement executable acceptance with real-store and protocol-client evidence.
+            # The runner creates/drops only test_* databases in OUR PostgreSQL container and
+            # flushes OUR Valkey. Stop our web process first; no browser/CLI work follows.
+            app.kill()
+            app.wait(timeout=10)
+            store_env = {key: value for key, value in os.environ.items() if not key.startswith(
+                ("BOOTLEG_", "PG", "DATABASE_URL", "MIGRATION_DATABASE_URL", "TEST_DATABASE", "VALKEY_", "OTEL_"))}
+            store_env.update(BOOTLEG_TEST_ISOLATED="1",
+                             TEST_DATABASE_ADMIN_URL=f"postgres://postgres:isolated-test@127.0.0.1:{pgport}/postgres",
+                             VALKEY_URL=f"redis://127.0.0.1:{redisport}/0")
+            subprocess.run(["cargo", "run", "--locked", "-p", "bootleg-infrastructure", "--example", "test_database", "--", "--presence"],
+                           cwd=WEB, env=store_env, stdout=log, stderr=log, check=True, timeout=300)
+            results["stale_session_callbacks"] = "passed: real-store domain adapters and real WebSocket protocol clients; not executable-agent evidence"
             print("PASS [actual CLI + Chromium]: approval/denial, long poll, private credentials, expiry, logout")
             print("PASS [actual CLI + PTY]: config, cancellation, multiple organizations/projects, create, rotate")
             print("PASS [actual native agents + CLI]: duplicate labels, unknown/dirty baselines, restart identity,")
@@ -442,9 +534,15 @@ def main():
             print("PASS [Chromium + real SSE]: live updates without refresh, literal markup labels,")
             print("     control-plane outage retains stale data and reconnects; agent supervisors survive")
             print("PASS [agents + CLI + Chromium]: project deactivation, application survival, permission-loss clearing")
-            print("SKIP: kind discovery; cross-org isolation; stale-session fencing;")
-            print("      disabled network; browser hidden tabs")
-            print("Registration acceptance remains INCOMPLETE; diff preview gate is closed.")
+            print("PASS [two CLI accounts + Chromium]: cross-org discovery and token-rotation isolation")
+            if not options.kind:
+                print("SKIP: kind discovery (enable --kind)")
+            print("PASS [Chromium native visibility + CDP network observation]: hidden tab closes SSE, foreground reconnects")
+            print("PASS [real-store domain + real WebSocket clients]: old-session heartbeat/disconnect fencing (supplemental)")
+            if not options.docker:
+                print("SKIP: disabled network syscall proof (enable --docker)")
+            complete = all(value.startswith("passed:") for value in results.values())
+            print("Registration acceptance: " + ("GREEN (evidence levels reported above)" if complete else "INCOMPLETE; optional prerequisites/scenarios skipped"))
         finally:
             failure = sys.exc_info()[0]
             for child in children:
@@ -460,19 +558,25 @@ def main():
                 result = subprocess.run(["docker", "rm", "-f", "-v", cid],
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 cleanup_failed |= result.returncode != 0
+            if kind_cluster:
+                cleanup_failed |= not kind_cluster.cleanup()
             if docker_network:
                 cleanup_failed |= subprocess.run(["docker", "network", "rm", docker_network],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
-            if docker_image:
-                cleanup_failed |= subprocess.run(["docker", "image", "rm", docker_image],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
+            for image in (trace_image, docker_image):
+                if image:
+                    cleanup_failed |= subprocess.run(["docker", "image", "rm", image],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
             log.close() if "log" in locals() else None
             # Allowlisted diagnostic report: never persist raw exceptions, logs, cookies or DTOs.
-            report = dict(scenarios=results, registration_complete=False,
+            report = dict(scenarios=results, registration_complete=not failure and not cleanup_failed and all(
+                              value.startswith("passed:") for value in results.values()),
                           failure_type=failure.__name__ if failure else None,
                           cleanup="failed" if cleanup_failed else "completed",
                           revisions={repo.name: run("git", "rev-parse", "HEAD", cwd=repo)
-                                     for repo in (ROOT, WEB, SMUGGLER, ROOT.parent / "bootleg-core")})
+                                     for repo in (ROOT, WEB, SMUGGLER, ROOT.parent / "bootleg-core")},
+                          tracked_edits={repo.name: bool(run("git", "status", "--porcelain", "--untracked-files=no", cwd=repo))
+                                         for repo in (ROOT, WEB, SMUGGLER, ROOT.parent / "bootleg-core")})
             report_path = artifact_dir / "report.json"
             with open(report_path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
                 json.dump(report, output, indent=2)

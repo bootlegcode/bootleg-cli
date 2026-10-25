@@ -1,23 +1,67 @@
 // Stateful real Chromium driver. JSON-line commands/results; credentials only on stdin.
 // No request routing, synthetic EventSource, snapshots or HTTP responses.
 const readline = require('node:readline');
+const { spawn } = require('node:child_process');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_modules/playwright'));
 (async () => {
-  let browser, context, page;
+  let browser, chrome, context, page, cover, closing;
+  let streamStarts = 0;
+  const streams = new Set();
+  async function shutdown() {
+    if (!closing) closing = (async () => {
+      try { await browser?.close(); } finally {
+        if (chrome && chrome.exitCode === null && chrome.signalCode === null) {
+          await new Promise(resolve => { chrome.once('exit', resolve); chrome.kill('SIGTERM'); });
+        }
+      }
+    })();
+    return closing;
+  }
+  async function waitFor(predicate) {
+    const deadline = Date.now() + 10000;
+    while (!predicate()) {
+      assert.ok(Date.now() < deadline, 'stream lifecycle deadline');
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+  }
   for (const signal of ['SIGTERM', 'SIGINT']) {
-    process.once(signal, async () => { await browser?.close(); process.exit(1); });
+    process.once(signal, async () => { await shutdown(); process.exit(1); });
   }
   const input = readline.createInterface({ input: process.stdin });
   try {
     for await (const line of input) {
       const command = JSON.parse(line);
       if (command.action === 'open') {
-        browser = await chromium.launch({ headless: true });
-        context = await browser.newContext();
+        // Playwright's usual focus emulation keeps background pages visible. Connect to
+        // our own full Chromium with noDefaults so tab visibility is native, not mocked.
+        chrome = spawn(chromium.executablePath(), ['--headless=new', '--remote-debugging-port=0',
+          '--user-data-dir=' + command.profile, '--no-first-run', '--no-default-browser-check'],
+          { stdio: ['ignore', 'ignore', 'pipe'] });
+        const endpoint = await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Chromium startup deadline')), 15000);
+          let text = '';
+          chrome.stderr.on('data', chunk => {
+            text = (text + chunk).slice(-16384);
+            const match = text.match(/DevTools listening on (ws:\/\/\S+)/);
+            if (match) { clearTimeout(timer); resolve(match[1]); }
+          });
+          chrome.once('error', () => { clearTimeout(timer); reject(new Error('Chromium launch failed')); });
+          chrome.once('exit', () => { clearTimeout(timer); reject(new Error('Chromium exited')); });
+        });
+        browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
+        context = browser.contexts()[0];
         await context.addCookies(command.cookies.map(c => ({ ...c, url: command.origin })));
         page = await context.newPage();
+        const network = await context.newCDPSession(page);
+        await network.send('Network.enable');
+        network.on('Network.requestWillBeSent', event => {
+          if (event.request.url.endsWith('/instances/events')) { streams.add(event.requestId); streamStarts++; }
+        });
+        network.on('Network.loadingFailed', event => streams.delete(event.requestId));
+        network.on('Network.loadingFinished', event => streams.delete(event.requestId));
+        await page.bringToFront();
         await page.goto(command.origin + command.path);
         await page.waitForFunction(() => document.querySelector('[data-instances-status]')?.textContent.includes('live updates connected'));
       } else if (command.action === 'rows') {
@@ -28,6 +72,22 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
         // Markup labels must remain text even in a real DOM.
         assert.equal(await page.locator('[data-instances-rows] b, [data-instances-rows] img').count(), 0);
         if (command.label) assert.ok((await page.locator('[data-instances-rows]').textContent()).includes(command.label));
+        if (command.baselines) {
+          const text = await page.locator('[data-instances-rows]').textContent();
+          assert.ok(text.includes('Unknown commit · cleanliness unknown'));
+          assert.ok(text.includes('a'.repeat(40) + ' · dirty'));
+        }
+      } else if (command.action === 'hide') {
+        cover = await context.newPage();
+        await cover.bringToFront();
+        await page.waitForFunction(() => document.hidden && document.querySelector('[data-instances-status]').textContent.includes('paused'), null, { polling: 100 });
+        await waitFor(() => streams.size === 0);
+      } else if (command.action === 'show') {
+        const previous = streamStarts;
+        await page.bringToFront();
+        await page.waitForFunction(() => !document.hidden && document.querySelector('[data-instances-status]').textContent.includes('Live updates connected'));
+        await waitFor(() => streamStarts > previous && streams.size === 1);
+        await cover.close();
       } else if (command.action === 'stale') {
         await page.waitForFunction(() => document.querySelector('[data-instances-status]').textContent.includes('Stale data'));
         assert.equal(await page.locator('[data-instances-rows] tr').count(), command.count);
@@ -38,8 +98,7 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
         assert.equal(await page.locator('[data-instances-rows] tr').count(), 0);
         assert.equal(await page.locator('[data-instances-results]').isVisible(), false);
       } else if (command.action === 'close') {
-        await browser.close();
-        browser = undefined;
+        await shutdown();
         console.log(JSON.stringify({ ok: true, action: command.action }));
         break;
       } else {
@@ -48,7 +107,7 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
       console.log(JSON.stringify({ ok: true, action: command.action }));
     }
   } finally {
-    await browser?.close();
+    await shutdown();
     input.close();
   }
 })().catch(() => {

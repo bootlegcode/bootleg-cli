@@ -2,9 +2,13 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_modules/playwright'));
+let browser;
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.once(signal, async () => { await browser?.close(); process.exit(1); });
+}
 (async () => {
   const input = JSON.parse(fs.readFileSync(0, 'utf8'));
-  const browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true });
   try {
     const context = await browser.newContext();
     await context.addCookies(input.cookies.map(c => ({ ...c, url: input.origin })));
