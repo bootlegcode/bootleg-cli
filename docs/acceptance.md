@@ -1,5 +1,14 @@
 # Registration acceptance checkpoint
 
+## Presence capacity follow-up
+
+Measured shared snapshot locks reduce heartbeat p99 from 1,379.9 ms to 44.4 ms
+at 100 agents / 256 SSE viewers / two replicas (300-second matched runs).
+No observed false expiry; tested envelope, startup caveats, artifacts and exact
+commands: [presence-capacity.md](presence-capacity.md). Full `--kind` acceptance
+rerun is green at the pins below; all owned resources were cleaned. Durable report:
+`docs/presence-capacity/66fc0c7d260f-registration.json`.
+
 ## Presence quota follow-up
 
 Active-session admission now counts retained offline reconnects, while allowing
@@ -11,7 +20,8 @@ sanitized report: `.pi/acceptance/bootleg-acceptance-3931a14dfc59/report.json`.
 The harness reported successful cleanup. An earlier tool-timeout interrupted run
 (`bootleg-acceptance-dabaf4a50814`) was manually cleaned by exact owned resource
 prefix before retry; no development services or existing clusters were changed.
-Capacity measurements remain outstanding; these tests establish correctness only.
+These quota tests establish correctness only; subsequent capacity evidence is
+linked above.
 
 ## Reproduce
 
@@ -22,9 +32,9 @@ before building; it never checks out/reset repositories for you:
 | Repository | Revision |
 | --- | --- |
 | core | `17a784d0f0fe654e88caf226274ef9f792d193fb` |
-| web | `bc257c4d96cf5a605fc3c82124f9fe889289c5a4` |
+| web | `4e67ab48fe875ed8725830424e9236991191eae5` |
 | smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
-| CLI | this acceptance commit, built on `fa89a4d` |
+| CLI | this capacity-harness commit, built on `cca2f9f` |
 
 Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
 recorded in the report. Untracked handoff documents are preserved, not removed.
@@ -74,8 +84,9 @@ and secret source files live in the private temporary home.
 ## Scenario results
 
 `--kind` completed successfully on macOS. **Registration acceptance is green at this
-checkpoint**, with the evidence levels below. This does not claim capacity/load
-validation, a complete web CI pass, file synchronization or diff preview.
+checkpoint**, with the evidence levels below. Capacity/load evidence is reported
+separately in [presence-capacity.md](presence-capacity.md). This does not claim a
+complete web CI pass, file synchronization or diff preview.
 
 | Scenario | Result / evidence level |
 | --- | --- |
@@ -157,7 +168,8 @@ listed after successful runs.
   43 passed; account/view suite 8 passed, 3 failed on unchanged dashboard markup
   expectations; later security suite not reached. Workspace formatting check also
   reports existing drift. See `../bootleg-web/docs/registration-acceptance.md`.
-- Phase 2 quota/concurrent-admission regressions and measured snapshot capacity remain
-  outstanding. No capacity claim is established by these few-agent acceptance tests.
+- Phase 2 quota/concurrent-admission regressions and measured snapshot capacity are
+  complete for the explicitly bounded envelope in `presence-capacity.md`. The
+  few-agent registration scenarios alone do not establish capacity.
 - Coordinated CI and remaining core/smuggler documentation reconciliation are open.
   Diff preview is not implemented; no transfer or remote mutation was added.

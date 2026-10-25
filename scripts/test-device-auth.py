@@ -50,7 +50,17 @@ def main():
     parser.add_argument("--docker", action="store_true", help="exercise Docker Desktop agent network lifecycle (macOS)")
     parser.add_argument("--kind", action="store_true", help="also create an isolated kind cluster (implies --docker)")
     parser.add_argument("--allow-dirty-dependencies", action="store_true", help="explicitly test tracked edits at the pinned sibling revisions")
+    parser.add_argument("--presence-load", metavar="AGENTS,VIEWERS,REPLICAS,SECONDS",
+                        help="run isolated protocol/SSE capacity measurement instead of registration scenarios")
     options = parser.parse_args()
+    load_config = None
+    if options.presence_load:
+        try:
+            agents, viewers, replicas, seconds = map(int, options.presence_load.split(","))
+            assert 1 <= agents <= 200 and 0 <= viewers <= 128 * replicas and 1 <= replicas <= 4 and seconds >= 90
+            load_config = dict(agents=agents, viewers=viewers, replicas=replicas, seconds=seconds)
+        except (ValueError, AssertionError):
+            parser.error("load requires 1..200 agents, 0..128 viewers/replica, 1..4 replicas, >=90 seconds")
     pins = json.loads((ROOT / "scripts/acceptance-revisions.json").read_text())
     for name, expected in pins.items():
         repo = ROOT.parent / name
@@ -209,6 +219,18 @@ def main():
             assert token_file.stat().st_mode & 0o777 == 0o600
             projects = cli("projects", "list", "--org-id", org)
             assert len(projects) == 1
+
+            if load_config:
+                from presence_load import measure
+                results["presence_load"] = "running"
+                measurement = measure(load_config, origin, env, home, log, children, pg,
+                                      org, projects[0]["project_id"], token_file.read_text().strip(),
+                                      token, cookies, WEB, ROOT)
+                with open(artifact_dir / "load.json", "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as output:
+                    json.dump(measurement, output, indent=2)
+                assert not measurement.get("failure") and not measurement["errors"], "load measurement failed; see sanitized load.json"
+                results["presence_load"] = "passed: actual stores, web replicas, protocol sockets and HTTP SSE viewers"
+                return
 
             # A second real account has no membership in the first account's organizations.
             outsider_home = home / "outsider"

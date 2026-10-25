@@ -1,0 +1,37 @@
+{
+  "scenarios": {
+    "chromium_login": "passed: actual CLI and Chromium",
+    "interactive_config": "skipped: not reached",
+    "native_discovery": "skipped: not reached",
+    "browser_sse": "skipped: not reached",
+    "control_plane_outage": "skipped: not reached",
+    "restart_identity": "skipped: not reached",
+    "docker_network_lifecycle": "skipped: not reached",
+    "rotation": "skipped: not reached",
+    "deactivation": "skipped: not reached",
+    "browser_permission_loss": "skipped: not reached",
+    "multi_org_project_config": "skipped: not reached",
+    "expiry_logout_denial": "skipped: not reached",
+    "kind": "skipped: not implemented",
+    "cross_org_isolation": "skipped: not implemented",
+    "stale_session_callbacks": "skipped: not implemented",
+    "disabled_network": "skipped: not implemented",
+    "hidden_tabs": "skipped: not implemented",
+    "presence_load": "passed: actual stores, web replicas, protocol sockets and HTTP SSE viewers"
+  },
+  "registration_complete": false,
+  "failure_type": null,
+  "cleanup": "completed",
+  "revisions": {
+    "bootleg-cli": "cca2f9fbafa7786a46a7fba383f47790312e427d",
+    "bootleg-web": "bc257c4d96cf5a605fc3c82124f9fe889289c5a4",
+    "bootleg-smuggler": "7869c5da4015894eb523232e0285c11140d03143",
+    "bootleg-core": "17a784d0f0fe654e88caf226274ef9f792d193fb"
+  },
+  "tracked_edits": {
+    "bootleg-cli": true,
+    "bootleg-web": false,
+    "bootleg-smuggler": false,
+    "bootleg-core": false
+  }
+}
