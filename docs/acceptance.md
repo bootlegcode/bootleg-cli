@@ -1,5 +1,18 @@
 # Registration acceptance checkpoint
 
+## Presence quota follow-up
+
+Active-session admission now counts retained offline reconnects, while allowing
+connected replacement without increasing occupancy. Independent PostgreSQL pools
+and Valkey connections race admissions with small limits in the real-store suite.
+`just test`: 109 passed; `bash scripts/test-integration.sh --presence`: 4 passed.
+Full `python3 scripts/test-device-auth.py --kind` passed with the revisions below;
+sanitized report: `.pi/acceptance/bootleg-acceptance-3931a14dfc59/report.json`.
+The harness reported successful cleanup. An earlier tool-timeout interrupted run
+(`bootleg-acceptance-dabaf4a50814`) was manually cleaned by exact owned resource
+prefix before retry; no development services or existing clusters were changed.
+Capacity measurements remain outstanding; these tests establish correctness only.
+
 ## Reproduce
 
 Use sibling checkouts `bootleg-{core,cli,smuggler,web}` under one parent. The harness
@@ -8,8 +21,8 @@ before building; it never checks out/reset repositories for you:
 
 | Repository | Revision |
 | --- | --- |
-| core | `05144d6e047fc5c88afd58143d9f6771fd262af7` |
-| web | `515974dcdfcc03f60ab4e0ca488726860f49c126` |
+| core | `17a784d0f0fe654e88caf226274ef9f792d193fb` |
+| web | `bc257c4d96cf5a605fc3c82124f9fe889289c5a4` |
 | smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
 | CLI | this acceptance commit, built on `fa89a4d` |
 
