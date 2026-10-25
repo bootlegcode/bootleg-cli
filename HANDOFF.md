@@ -1,6 +1,6 @@
 # CLI workstream handoff
 
-Scope: `bootleg-cli` only. No sibling repository/shared contract edits. Core checkpoint: `5d37918fb8aef80f9b5a8cc443e7241e0af1d419` (path dependency; shared fixtures read-only).
+Scope: `bootleg-cli` only. No sibling repository/shared contract edits. Core checkpoint: `05144d6e047fc5c88afd58143d9f6771fd262af7` (path dependency; shared fixtures read-only).
 
 ## Current surface
 
@@ -31,9 +31,9 @@ Earlier CLI implementation also added/changed `Cargo.toml`, `Cargo.lock`, `src/d
 
 ## Integration blockers / coordinator actions
 
-1. No actual web deployment or provisioned eligible/expired/cross-org credentials were exercised. Opt-in tests are provided, not claimed as passing integration tests.
-2. Interactive browser login + fzf configuration with actual organization/project responses still needs live end-to-end validation. The real fzf filter test is not a claim that the whole interactive workflow was exercised.
-3. Real project mutations/logout, registered smuggler snapshots, Docker/kind acceptance, and ambiguous mutation failure after server commit/before response still require coordinated testing using real components and controlled fault injection. No canned API server substitutes.
+1. `python3 scripts/test-device-auth.py` now builds CLI/web/smuggler, provisions disposable real stores, and exercises Chromium approval/denial, real PTY fzf configuration, expired credentials and logout. See `docs/acceptance.md` for exact revisions, prerequisites and scenario results.
+2. CLI project create/rotation and native smuggler discovery, duplicate labels, baseline metadata, restart identity and rotation invalidation passed. These are executable acceptance checks, not protocol-client substitutes.
+3. Full registration acceptance is still incomplete: Docker/kind, cross-org isolation, browser SSE, controlled network/outage/deactivation tests, and ambiguous mutations remain unproven here. Quota/capacity work and diff preview have not started; the diff gate remains closed.
 4. Existing coordinator clarification: the frozen contract requires agent plaintext-development opt-in but does not specify its flag/env spelling. Deployment examples intentionally do not invent a shared setting.
 
 Secure file fallback remains Unix-only; no OS keychain adapter claimed. Human results are structured text; watch uses NDJSON in JSON mode and emits a stale marker on refresh failure before exiting. Core remains a coordinated sibling dependency, not a published release.

@@ -86,7 +86,7 @@ Human output uses consistent rounded tables/panels on interactive terminals, wit
 
 ## CLI development and tests
 
-These commands compile/test the **CLI executable itself**, not your application. Requires Rust (edition 2024) and sibling `../bootleg-core` at coordinated checkpoint `5d37918fb8aef80f9b5a8cc443e7241e0af1d419`.
+These commands compile/test the **CLI executable itself**, not your application. Requires Rust (edition 2024) and sibling `../bootleg-core` at coordinated checkpoint `05144d6e047fc5c88afd58143d9f6771fd262af7`.
 
 ```sh
 cargo build --locked
@@ -108,12 +108,12 @@ Real-server tests are opt-in, using the actual web service/backing stores and re
 cargo test --test real_server -- --ignored
 ```
 
-Run the repeatable login/config acceptance test with Docker, Python 3, `fzf`, and the sibling web checkout:
+Run the repeatable partial registration acceptance test with Docker, Python 3, `fzf`, Node, and the sibling core/web/smuggler checkouts (see [tested revisions and results](docs/acceptance.md)):
 
 ```sh
 python3 scripts/test-device-auth.py
 ```
 
-This builds both binaries and starts disposable PostgreSQL, Valkey, Mailpit, and the real web application. It exercises approval during long polling, denial, private credential storage, identity/discovery, real `fzf` under a PTY (one/multiple organizations), cancellation, expired-credential re-login, and logout. It uses actual cookie/CSRF-protected website forms over HTTP; it does not automate a graphical browser or test OS browser dispatch. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used.
+This builds all three binaries and starts disposable PostgreSQL, Valkey, Mailpit, real web, and native smuggler processes. Chromium approves/denies CLI login using the actual UI. The suite also exercises real `fzf` under a PTY, project creation/rotation, and native agent discovery. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used. OS browser dispatch is not tested.
 
-Project mutations and Docker/kind agent acceptance remain separate integration work. See `HANDOFF.md`.
+This is **partial acceptance**, not the full registration milestone. Docker/kind, browser SSE and additional failure scenarios are explicitly skipped. Diff preview remains gated. See [acceptance results](docs/acceptance.md).
