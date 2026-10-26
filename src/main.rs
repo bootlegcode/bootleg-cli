@@ -86,6 +86,11 @@ enum Command {
         #[command(subcommand)]
         command: InstancesCommand,
     },
+    /// Read-only metadata preview against explicitly selected reported build commits.
+    Diff {
+        #[arg(long, required = true)]
+        container_id: Vec<bootleg_core::ContainerId>,
+    },
 }
 #[derive(Subcommand)]
 enum OrgsCommand {
@@ -458,6 +463,7 @@ fn run(cli: &Cli) -> Result<()> {
         }
     }
     match &cli.command {
+        Command::Diff { .. } => Err("diff uses its isolated read-only command path".into()),
         Command::Login {
             no_browser,
             device_name,
@@ -732,6 +738,80 @@ fn run(cli: &Cli) -> Result<()> {
         _ => unreachable!("offline commands handled above"),
     }
 }
+fn diff_report(cli: &Cli, requested: &[bootleg_core::ContainerId]) -> bootleg_cli::preview::Report {
+    use bootleg_cli::preview::{Code, Diagnostic, Report};
+    let execute = || -> std::result::Result<Report, Code> {
+        // Preflight all local identity/configuration without login or mutation.
+        bootleg_cli::preview_application::DiscoverySink::new(requested)?;
+        let mut config = RepositoryConfig::load(&cli.config).map_err(|_| Code::IoFailed)?;
+        let origin = resolve_origin(cli.api_url.as_deref(), &config, cli.allow_http)
+            .map_err(|_| Code::DiscoveryFailed)?;
+        if let Some(saved) = &config.api_url
+            && ApiOrigin::parse(saved, true)
+                .map_err(|_| Code::DiscoveryFailed)?
+                .as_str()
+                != origin.as_str()
+        {
+            config.project_id = None;
+        }
+        let project = config.project_id.ok_or(Code::DiscoveryFailed)?;
+        let token = credential(&origin)
+            .map_err(|_| Code::DiscoveryFailed)?
+            .ok_or(Code::DiscoveryFailed)?;
+        let api = ApiClient::new(origin, Some(token)).map_err(|_| Code::DiscoveryFailed)?;
+        #[cfg(unix)]
+        {
+            let mut discovery = bootleg_cli::http::InstanceDiscovery::new(&api, project);
+            let mut capture = bootleg_cli::preview_capture::Capture::new(
+                std::env::current_dir().map_err(|_| Code::IoFailed)?,
+                "/usr/bin/git".into(),
+            )?;
+            Ok(bootleg_cli::preview_application::preview(
+                requested,
+                &mut discovery,
+                &mut capture,
+            ))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (api, project);
+            Err(Code::UnsupportedRepository)
+        }
+    };
+    execute().unwrap_or_else(|code| Report::failure(vec![Diagnostic::new(code, None)]))
+}
+
+fn run_diff(cli: &Cli, requested: &[bootleg_core::ContainerId]) -> u8 {
+    use bootleg_cli::preview::{Diagnostic, Report};
+    let mut report = diff_report(cli, requested);
+    let rendered = if cli.json {
+        report.json()
+    } else {
+        report.human()
+    };
+    let mut text = rendered.unwrap_or_else(|code| {
+        report = Report::failure(vec![Diagnostic::new(code, None)]);
+        if cli.json {
+            report.json().expect("bounded static error")
+        } else {
+            report.human().expect("bounded static error")
+        }
+    });
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    let result = if !cli.json && report.exit_code() == 2 {
+        std::io::stderr().lock().write_all(text.as_bytes())
+    } else {
+        std::io::stdout().lock().write_all(text.as_bytes())
+    };
+    if result.is_err() {
+        2
+    } else {
+        report.exit_code()
+    }
+}
+
 fn main() {
     let args: Vec<_> = std::env::args_os().collect();
     let cli = if args.len() == 1 {
@@ -740,6 +820,9 @@ fn main() {
         Cli::parse_from(args)
     };
     style::configure(cli.no_color);
+    if let Command::Diff { container_id } = &cli.command {
+        std::process::exit(run_diff(&cli, container_id).into());
+    }
     if let Err(e) = run(&cli) {
         if cli.json {
             let value = e.downcast_ref::<Failure>().map(Failure::json).unwrap_or_else(|| serde_json::json!({"error":{"code":"cli_error","message":terminal_text(&e.to_string()),"level":"error"}}));

@@ -1,6 +1,6 @@
 # Bootleg CLI
 
-Configure a local project and discover its running smuggler agents. Presence means control-plane connectivity, not application readiness. File synchronization is not implemented yet. The next milestone is specified in the [read-only diff preview v1 design](docs/diff-preview-v1.md); `bootleg diff` is not implemented yet.
+Configure a local project and discover its running smuggler agents. Presence means control-plane connectivity, not application readiness. File synchronization is not implemented yet. [`bootleg diff`](docs/diff-preview.md) provides a bounded, read-only metadata preview against explicitly selected agents' reported build commits—not verified container filesystem contents.
 
 ## Configure a project
 
@@ -43,6 +43,15 @@ There is no standalone `bootleg baseline` command. Instance results retain local
 
 **Pod names belong to smuggler.** The CLI neither reads a local `POD_NAME` nor stores pod-name settings in repository config. Smuggler discovers/resolves its own runtime label and reports it. Legacy `name_env` repository settings are ignored and omitted on the next save.
 
+## Read-only preview
+
+```sh
+bootleg diff --container-id container_<id>
+bootleg --json diff --container-id container_<id> --container-id container_<other>
+```
+
+Exit codes are **0** (no changes), **1** (changes), and **2** (failure). No file contents, transfers, restarts or remote writes. Read the [scope, sensitive-data policy, conservative refusals and validation evidence](docs/diff-preview.md) before publishing reports.
+
 ## Browser login
 
 `bootleg login` prints a unique approval URL and matching code, then opens your default browser. Compare the code and explicitly authorize the device on the website. An existing website session is reused; otherwise sign in there. The CLI never asks for your password.
@@ -82,11 +91,11 @@ CI can supply `BOOTLEG_USER_TOKEN` plus mandatory matching `BOOTLEG_USER_TOKEN_O
 
 Human output uses consistent rounded tables/panels on interactive terminals, with cyan informational headings, green success messages, amber warnings, and red errors. Narrow terminals use stacked list records. Redirected output and `TERM=dumb` omit table borders; IDs and URLs are wrapped rather than truncated. Human-output color is enabled by default, including redirected output; use the global `--no-color` flag to disable it. Errors and notices remain on stderr. Clap help/argument validation retain their native formatting, and the interactive picker remains managed by `fzf`.
 
-`--json` emits structured output without styling; watch emits newline-delimited snapshots. Watch refreshes sequentially every three seconds after each completed refresh and emits a stale marker then exits on failure. Announcements use stderr only and are controlled by `--notices=auto|always|never` / `BOOTLEG_NOTICES`. Auto displays them only on interactive stderr outside JSON mode. Errors are never suppressed. Bootstrap is best effort (two seconds), once per network invocation; offline commands do not bootstrap.
+`--json` emits structured output without styling; watch emits newline-delimited snapshots. Watch refreshes sequentially every three seconds after each completed refresh and emits a stale marker then exits on failure. Announcements use stderr only and are controlled by `--notices=auto|always|never` / `BOOTLEG_NOTICES`. Auto displays them only on interactive stderr outside JSON mode. Errors are never suppressed. Bootstrap is best effort (two seconds), once per ordinary network invocation; offline commands and the isolated `diff` path do not bootstrap.
 
 ## CLI development and tests
 
-These commands compile/test the **CLI executable itself**, not your application. Requires Rust (edition 2024) and sibling `../bootleg-core` at coordinated checkpoint `05144d6e047fc5c88afd58143d9f6771fd262af7`.
+These commands compile/test the **CLI executable itself**, not your application. Requires Rust (edition 2024) and sibling `../bootleg-core` at the [coordinated acceptance pin](docs/acceptance.md).
 
 ```sh
 cargo build --locked
@@ -118,4 +127,4 @@ python3 scripts/test-device-auth.py --kind
 
 This builds all three binaries and starts disposable PostgreSQL, Valkey, Mailpit, real web, and native smuggler processes. Chromium approves/denies CLI login using the actual UI. The suite also exercises real `fzf` under a PTY, project creation/rotation, and native agent discovery. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used. OS browser dispatch is not tested.
 
-Full `--kind` registration acceptance passed, including Docker/kind discovery, syscall-level disabled-mode checks, cross-org isolation, and real Chromium SSE/hidden-tab behavior. Supplemental real-store/WebSocket fencing tests are explicitly distinguished from executable-agent evidence. Default runs skip Docker/kind-dependent scenarios. The harness verifies compatible sibling revisions before building and retains sanitized JSON reports under `.pi/acceptance/`. Capacity hardening, CI and diff preview remain outstanding. See [acceptance results](docs/acceptance.md).
+Full `--kind` registration acceptance passed, including Docker/kind discovery, syscall-level disabled-mode checks, cross-org isolation, and real Chromium SSE/hidden-tab behavior. Supplemental real-store/WebSocket fencing tests are explicitly distinguished from executable-agent evidence. Default runs skip Docker/kind-dependent scenarios. The harness verifies compatible sibling revisions before building and retains sanitized JSON reports under `.pi/acceptance/`. Read-only preview also has [real registered-agent and isolated capture-syscall evidence](docs/diff-preview.md). CI remains a separate milestone. See [acceptance results](docs/acceptance.md).

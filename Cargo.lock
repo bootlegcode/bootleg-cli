@@ -109,6 +109,7 @@ dependencies = [
  "comfy-table",
  "owo-colors",
  "reqwest",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",

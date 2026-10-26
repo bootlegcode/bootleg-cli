@@ -43,6 +43,10 @@ mod unix {
 
     pub enum HistoryCommand<'a> {
         Head,
+        Root,
+        GitDirectory,
+        SafetyConfig,
+        Attributes(&'a str),
         ObjectFormat,
         CommitExists(&'a ObjectId),
         IsAncestor(&'a ObjectId, &'a ObjectId),
@@ -56,6 +60,8 @@ mod unix {
         /// Raw object bytes, without filters or textconv. Caller reserves the
         /// cumulative input budget and checks sensitive paths before requesting.
         Blob(&'a ObjectId),
+        /// The capture adapter has already reserved this exact object size.
+        BlobWithin(&'a ObjectId, usize),
     }
 
     impl HistoryCommand<'_> {
@@ -66,6 +72,10 @@ mod unix {
         fn output_limit(&self) -> usize {
             if self.records() {
                 MAX_PATHS * (MAX_RECORD_BYTES + 1 + 512)
+            } else if matches!(self, Self::Attributes(_)) {
+                3 * (MAX_PATH_BYTES + 128)
+            } else if let Self::BlobWithin(_, size) = self {
+                (*size).min(MAX_FILE_BYTES)
             } else if matches!(self, Self::Blob(_)) {
                 MAX_FILE_BYTES
             } else {
@@ -214,6 +224,11 @@ mod unix {
                     "-c",
                     "credential.helper=",
                 ]);
+            if let HistoryCommand::Attributes(path) = &operation {
+                crate::preview::validate_path(path.as_bytes())
+                    .map_err(|_| GitError::InvalidInput)?;
+            }
+            let config = matches!(operation, HistoryCommand::SafetyConfig);
             let records = operation.records();
             let mut record_budget = RecordBudget {
                 index: matches!(operation, HistoryCommand::Index),
@@ -222,6 +237,26 @@ mod unix {
             let ancestry = matches!(operation, HistoryCommand::IsAncestor(_, _));
             let require_commit = matches!(operation, HistoryCommand::CommitExists(_));
             match operation {
+                HistoryCommand::Root => {
+                    command.args(["rev-parse", "--show-toplevel"]);
+                }
+                HistoryCommand::GitDirectory => {
+                    command.args(["rev-parse", "--absolute-git-dir"]);
+                }
+                HistoryCommand::SafetyConfig => {
+                    command.args(["config", "--null", "--get-regexp", "^(core\\.(bare|sparsecheckout|sparsecheckoutcone)|extensions\\.(worktreeconfig|partialclone)|remote\\..*\\.promisor)$"]);
+                }
+                HistoryCommand::Attributes(path) => {
+                    command.args([
+                        "check-attr",
+                        "-z",
+                        "filter",
+                        "working-tree-encoding",
+                        "diff",
+                        "--",
+                        path,
+                    ]);
+                }
                 HistoryCommand::Head => {
                     command.args(["rev-parse", "--verify", "HEAD^{commit}"]);
                 }
@@ -252,7 +287,7 @@ mod unix {
                 HistoryCommand::BlobSize(id) => {
                     command.args(["cat-file", "-s", &id.0]);
                 }
-                HistoryCommand::Blob(id) => {
+                HistoryCommand::Blob(id) | HistoryCommand::BlobWithin(id, _) => {
                     command.args(["cat-file", "blob", &id.0]);
                 }
             }
@@ -288,7 +323,7 @@ mod unix {
                     && eof
                 {
                     let affirmative = status.success();
-                    if (!affirmative && !(ancestry && status.code() == Some(1)))
+                    if (!affirmative && !((ancestry || config) && status.code() == Some(1)))
                         || (require_commit && output != b"commit\n")
                         || (records
                             && (record_budget.bytes != 0 || record_budget.detail_lines != 0))

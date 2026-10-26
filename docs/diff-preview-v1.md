@@ -1,6 +1,8 @@
 # Read-only diff preview — design v1
 
-Status: implementation contract for the next CLI milestone; **not implemented**.
+Status: implemented for the conservative Unix source scope described in
+[the command guide](diff-preview.md); validation evidence is linked there.
+This document remains the v1 implementation contract.
 Version: 1. Owned by `bootleg-cli`; no core wire, web, or smuggler changes.
 Registration and measured capacity remain the gate in [acceptance.md](acceptance.md).
 The shared `bootleg-core/docs/contract-v1.md` takes precedence for discovery DTOs.

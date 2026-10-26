@@ -1,7 +1,7 @@
 //! Read-only preview v1 domain policy. No subprocess, filesystem, or API access.
 //!
-//! This is not yet a CLI command. Adapters must capture a single bounded source
-//! view, enforce the pre-read sensitive-path gate, and establish Git evidence.
+//! Used by the `diff` command. Adapters capture one bounded source view,
+//! enforce the pre-read sensitive-path gate, and establish Git evidence.
 use bootleg_core::{BuildCommit, ContainerId};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -383,6 +383,55 @@ impl Report {
         } else {
             0
         }
+    }
+    /// Plain human rendering follows the same sorted, metadata-only projection.
+    pub fn human(&self) -> Result<String, Code> {
+        use std::fmt::Write;
+        let mut text = format!(
+            "{DISCLAIMER}\nScope: tracked and nonignored untracked files; ignored untracked files excluded.\n"
+        );
+        for error in &self.errors {
+            writeln!(text, "{}", error.message).expect("string write");
+        }
+        for target in &self.targets {
+            writeln!(
+                text,
+                "{} · {}",
+                target.container_id,
+                target.build_commit.as_str()
+            )
+            .expect("string write");
+            if target.changes.is_empty() {
+                text.push_str("  No changes.\n");
+            }
+            for change in &target.changes {
+                let kind = match change.kind {
+                    Kind::Add => "add",
+                    Kind::Modify => "modify",
+                    Kind::Delete => "delete",
+                };
+                let mode = |m| match m {
+                    Some(Mode::Regular) => "100644",
+                    Some(Mode::Executable) => "100755",
+                    None => "-",
+                };
+                let bytes = |n: Option<usize>| n.map_or_else(|| "-".to_owned(), |n| n.to_string());
+                writeln!(
+                    text,
+                    "  {kind} {} (bytes: {} -> {}; mode: {} -> {})",
+                    human_path(&change.path),
+                    bytes(change.old_bytes),
+                    bytes(change.new_bytes),
+                    mode(change.old_mode),
+                    mode(change.new_mode)
+                )
+                .expect("string write");
+                if text.len() > MAX_OUTPUT_BYTES {
+                    return Err(Code::LimitExceeded);
+                }
+            }
+        }
+        Ok(text)
     }
     /// Validate and buffer before stdout. Escaping bidi controls also prevents
     /// visual reordering when a JSON report is displayed directly in a terminal.

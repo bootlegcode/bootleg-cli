@@ -376,6 +376,9 @@ def main():
             assert {x["build_dirty"] for x in items} == {None, True}
             browser_check("rows", count=2, connected=2, label="duplicate <img src=x onerror=alert(1)>", baselines=True)
             results["native_discovery"] = "passed: native executables and CLI"
+            from acceptance_preview import verify_preview
+            results["diff_preview"] = verify_preview(base, env, home, org,
+                SMUGGLER / "target/debug/smuggler", children, log, outsider_env, pg)
             results["browser_sse"] = "passed: actual Chromium, real SSE, text-only labels"
             browser_check("hide")
             browser_check("show")

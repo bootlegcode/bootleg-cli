@@ -10,6 +10,52 @@ fn cli(root: &std::path::Path) -> Command {
     c
 }
 #[test]
+fn diff_preflight_is_bounded_private_and_uses_exit_two() {
+    let t = tempfile::tempdir().unwrap();
+    let id = bootleg_core::ContainerId::new().to_string();
+    let output = cli(t.path())
+        .args(["--json", "diff", "--container-id", &id])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["status"], "error");
+    assert_eq!(value["targets"], serde_json::json!([]));
+    assert_eq!(value["filesystem_verified"], false);
+    assert!(output.stderr.is_empty());
+    let output = cli(t.path())
+        .args(["diff", "--container-id", &id])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("container filesystem contents are not verified")
+    );
+    for args in [vec!["diff"], vec!["diff", "--container-id", "--bad"]] {
+        assert_eq!(
+            cli(t.path()).args(args).output().unwrap().status.code(),
+            Some(2)
+        );
+    }
+    let mut command = cli(t.path());
+    command.args(["--json", "diff"]);
+    for _ in 0..33 {
+        command.args([
+            "--container-id",
+            &bootleg_core::ContainerId::new().to_string(),
+        ]);
+    }
+    let output = command.output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["errors"][0]["code"], "limit_exceeded");
+    assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 0);
+}
+
+#[test]
 fn human_color_policy_and_json_are_separate() {
     let t = tempfile::tempdir().unwrap();
     for (flags, ansi) in [(vec![], true), (vec!["--no-color"], false)] {
