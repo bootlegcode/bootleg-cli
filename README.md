@@ -1,6 +1,6 @@
 # Bootleg CLI
 
-Configure a local project and discover its running smuggler agents. Presence means control-plane connectivity, not application readiness. File synchronization is not implemented yet.
+Configure a local project and discover its running smuggler agents. Presence means control-plane connectivity, not application readiness. File synchronization is not implemented yet. The next milestone is specified in the [read-only diff preview v1 design](docs/diff-preview-v1.md); `bootleg diff` is not implemented yet.
 
 ## Configure a project
 
