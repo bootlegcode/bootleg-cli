@@ -1,5 +1,59 @@
 # Diff preview implementation progress
 
+## Milestone complete — read-only command and acceptance
+
+`bootleg diff --container-id …` and `bootleg --json diff --container-id …` are
+implemented. See the [command guide](diff-preview.md) for supported source scope,
+conservative fail-closed refusals, exits 0/1/2 and disclosure/race caveats.
+The historical increments below describe development checkpoints, not current
+missing features.
+
+Completion commits: `51260a8` (capture/CLI/acceptance), `f0fb89c` and `a94e548`
+(pagination fixture corrections), `414c6ca` (special-file/race hardening).
+Only CLI changed; core/web/smuggler pins and wire protocols are unchanged.
+
+- `preview_capture.rs` integrates root/configuration/index/history/object gates,
+  one union of paths, shared no-follow source bytes, reserved input budgets,
+  raw blob comparisons, changed-path attributes and final race revalidation.
+- `preview_fs.rs` uses rustix descriptor-relative no-follow traversal, bounded
+  regular-file reads, inode/mode/size/mtime/ctime evidence and a bounded directory
+  inspection for untracked special files Git omits. Ignored directories are not
+  entered; submodules/symlinks/special candidates are refused, not followed.
+- The command reuses project/origin/credentials and authorized discovery, with
+  no login, credential refresh, bootstrap notices or mutation. Output is buffered,
+  deterministic, metadata-only and all-or-nothing. Human errors use stderr;
+  JSON errors retain the versioned envelope. No transfer/apply is enabled.
+- Actual temporary repositories cover final-worktree precedence, multiple
+  baselines, missing/divergent/shallow/replacement cases, ignored/untracked files,
+  renames/deletions, binary/mode/attribute/sensitive failures, special files,
+  submodule refusal, input limits, descriptor substitution and source/index races.
+- Real web/stores/registered-agent acceptance covers clean/different baselines,
+  dirty/unknown/offline failures, authorization denial, all exit codes and
+  deterministic source snapshots. 201 valid retained/offline DB fixtures force
+  selected registered targets onto a later real API page; no server is mocked.
+- Linux strace runs with network disabled and read-only root filesystem verify
+  regular, sensitive, symlink, promisor and untracked-special scenarios: no
+  filesystem mutation, lock, network or helper execution; writable opens only
+  to `/dev/null` for suppressed Git stdio. Fixture snapshots remain unchanged.
+
+Final validation: `cargo test --locked` **76 passed / 4 explicitly ignored**;
+optional real fzf test separately passed; clippy all targets `-D warnings`,
+formatting and whitespace checks passed. `python3 scripts/test-device-auth.py
+--kind` passed on implementation `414c6ca`, with cleanup completed; durable
+[registration report](diff-preview/registration.json). The report's CLI tracked-edit
+flag reflects the concurrently regenerated syscall JSON report, not implementation
+edits. `python3 scripts/test-preview-syscalls.py` also passed on that implementation;
+[syscall report](diff-preview/syscalls.json). No owned acceptance containers remain;
+the pre-existing development cluster was untouched.
+
+Conservative refusal is intentional, not an exact-container-drift claim: linked
+worktrees, alternate/promisor stores, all sensitive candidates, symlink/gitlink
+candidates and oversized unchanged input are rejected. The implementation does
+not promise an atomic filesystem snapshot or secret detection. See the guide for
+the full limits. Earlier failed pagination runs were fixture errors (nested
+metadata identity and UUIDv4 TypeID validation); their owned resources were cleaned
+before corrected, passing full reruns.
+
 ## Domain foundation (2026-10-26)
 
 `src/preview.rs` implements pure v1 policies and CLI-owned output types:

@@ -1,5 +1,24 @@
 # Registration acceptance checkpoint
 
+## Read-only diff preview checkpoint
+
+The complete pinned `--kind` registration suite remains green after exposing
+`bootleg diff`, including real registered-agent preview, authorization denial and
+forced multi-page discovery. Latest tested implementation: CLI `414c6ca`;
+core/web/smuggler pins below are unchanged. Durable sanitized report:
+[`diff-preview/registration.json`](diff-preview/registration.json). Cleanup completed.
+The CLI tracked-edit flag reflects the concurrently regenerated syscall report,
+not changes to the implementation under test.
+
+Independent Linux capture strace passed with networking disabled and read-only
+root filesystem; no filesystem mutation, lock, network or configured helper calls
+were observed (stdio opens of `/dev/null` are allowed). Durable report:
+[`diff-preview/syscalls.json`](diff-preview/syscalls.json). CLI tests: 76 passed,
+4 explicitly ignored; optional fzf test separately passed; clippy/fmt/diff checks
+passed. See [usage, conservative source refusals and evidence scope](diff-preview.md).
+This completes read-only preview, not synchronization, transfer/apply or a claim
+that reported build metadata verifies the current container filesystem.
+
 ## Presence capacity follow-up
 
 Measured shared snapshot locks reduce heartbeat p99 from 1,379.9 ms to 44.4 ms
@@ -34,7 +53,7 @@ before building; it never checks out/reset repositories for you:
 | core | `17a784d0f0fe654e88caf226274ef9f792d193fb` |
 | web | `4e67ab48fe875ed8725830424e9236991191eae5` |
 | smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
-| CLI | this capacity-harness commit, built on `cca2f9f` |
+| CLI | `414c6caf5b6b02ba7c5eff06bff24bd966f6b355` (read-only preview checkpoint) |
 
 Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
 recorded in the report. Untracked handoff documents are preserved, not removed.
