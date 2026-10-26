@@ -43,9 +43,10 @@ pins and wire contracts are unchanged.
 
 ### Remaining before the milestone can close
 
-1. Narrow application discovery/source ports and one-capture, distinct-baseline
-   orchestration. Freeze preview metadata only after complete bounded discovery;
-   enforce 100 pages / 20,000 records / 16 MiB response bytes.
+1. Implement the authorized HTTP adapter for the application discovery port below.
+   Charge its sink before response buffering/decoding and honor the shared deadline.
+   The application ports/orchestration and incremental budget sink are implemented;
+   actual bounded HTTP traversal is not yet implemented.
 2. Hardened Git process adapter: command/environment allowlist, optional-lock,
    lazy-fetch, replacement, prompt, pager, fsmonitor and helper suppression;
    bounded streaming output, per-operation 30s and invocation 120s deadlines.
@@ -63,5 +64,35 @@ pins and wire contracts are unchanged.
 6. Actual temporary-repository matrix in `diff-preview-v1.md`, immutable-state
    snapshots and helper/no-fetch/no-lock evidence, then real registered-agent
    discovery/authorization cases and full pinned registration acceptance.
+
+## Application orchestration increment
+
+`src/preview_application.rs` adds narrow synchronous discovery/capture/snapshot
+ports (compatible with the existing blocking HTTP stack), an incremental discovery
+sink, and all-or-nothing orchestration:
+
+- Validate explicit target IDs before discovery; count all pages/records/body bytes,
+  retain only requested metadata, and make limit violations sticky.
+- Require complete traversal before target selection; late inconsistent duplicates
+  and discovery failure prevent local capture.
+- Pass one shared 120s absolute deadline to adapters and check it between operations.
+  Blocking adapters must enforce it internally; these checks do not interrupt I/O.
+- Capture once for sorted distinct baselines; gate all baseline evidence through
+  domain policy before comparisons; compare once per baseline and associate each
+  target with its own result. Reject partial success and validate bounded JSON
+  before returning a report.
+
+Seven new tests exercise domain-port fakes and sink/deadline boundaries, including
+shared-baseline reuse, deterministic output, dirty/unknown/offline targets, late
+traversal failures, comparison failures, content exclusion and all three exits.
+These are **not** HTTP mocks or actual-repository adapter safety evidence. The
+capture port documents, but does not implement, filesystem/Git safety obligations.
+`bootleg diff` remains unexposed. Concrete adapters, rendering and full acceptance
+remain outstanding; no dependency pins or wire contracts changed.
+
+Validation: `cargo test --locked` (50 passed, 4 explicitly ignored),
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
+`git diff --check`. Full pinned registration acceptance was not rerun for this
+library-only increment.
 
 The v1 design remains the contract; this progress note does not relax its gates.
