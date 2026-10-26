@@ -46,12 +46,13 @@ pins and wire contracts are unchanged.
 1. Validate the implemented authorized HTTP adapter against the real web/stores
    and registered agents (including authorization, pagination and timeout cases).
    Bounded traversal is implemented; real-server evidence remains outstanding.
-2. Integrate the bounded tree/index/blob plumbing below with typed evidence parsing;
+2. Integrate the bounded plumbing and typed evidence parsers below into capture;
    validate promisor/shallow/replacement cases and isolated syscall evidence.
    Select a trusted Git executable and map adapter errors at integration.
-3. Actual Git object/history and index/tree enumeration, including unmerged,
-   intent-to-add, sparse, assume-unchanged and skip-worktree rejection; raw blob
-   reads and changed-path attribute checks without filters/textconv.
+3. Repository configuration/sparse-checkout gates, object completeness, and
+   changed-path attribute checks without filters/textconv. Typed index parsing
+   now rejects conflicts, intent-to-add, assume-unchanged and skip-worktree flags;
+   these checks still need capture integration.
 4. Descriptor-relative no-follow filesystem capture, one source view shared by
    baselines, before/after HEAD/index/enumeration/metadata race detection,
    symlink/type/special-entry rejection and submodule state inspection without
@@ -188,5 +189,38 @@ submodule gates, no-follow shared capture and race checks, error projection and
 CLI integration, remaining real-repository/helper/syscall/network tests, real-server
 authorization and full pinned acceptance. No `bootleg diff` command is exposed;
 the milestone remains open.
+
+## Typed Git evidence and index gates increment
+
+`src/preview_evidence.rs` adds strict internal tree, index and untracked-path
+parsers. They return byte-sorted owned entries, not user-facing diagnostics:
+
+- Validate exact UTF-8 path limits/root-relative safety, modes, object types,
+  full nonzero IDs of the expected SHA-1/SHA-256 width, record termination and
+  duplicates. Symlinks/gitlinks remain typed entries, not authorized reads.
+- Index plumbing now includes `--debug`. Its five metadata lines are framed
+  separately from the NUL-terminated pathname, capped at 512 bytes per entry
+  before retention. Newlines/tabs in names remain unambiguous.
+- Require stage zero and ordinary `H` tags; reject assume-unchanged, skip-worktree,
+  intent-to-add, stage/extended/unknown flags and sparse-directory entries. Parse
+  the debug format strictly and fail closed for unsupported Git output formats.
+  Index stat metadata is not used as proof of worktree equality.
+- Six additional tests cover malformed/truncated/duplicate/path evidence,
+  incremental index framing bounds, actual SHA-1/SHA-256 repositories, unusual
+  filenames, executable/symlink/gitlink entries, and each rejected index state.
+  Real index bytes remain unchanged and no persistent index lock is present.
+
+Validation: `cargo test --locked` (67 passed, 4 explicitly ignored),
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
+`git diff --check` passed. Other repositories and pins are unchanged; full pinned
+registration acceptance was not rerun for this unexposed library increment.
+
+Remaining: repository/configuration/sparse gates, attributes, submodule state,
+object completeness, aggregate source budgets, sensitive pre-read gates,
+descriptor-relative no-follow shared capture and race detection, integration and
+rendering, remaining actual-repository matrix and syscall/network evidence,
+real-server authorization and full pinned acceptance. The parser accepts bounded
+runner output; it does not itself discover or validate a repository or capture
+source contents. No `bootleg diff` command is exposed; the TODO remains open.
 
 The v1 design remains the contract; this progress note does not relax its gates.

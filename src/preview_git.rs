@@ -25,10 +25,14 @@ mod unix {
     }
 
     /// Only full object IDs are accepted; callers cannot inject revisions or options.
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct ObjectId(String);
 
     impl ObjectId {
+        pub fn as_str(&self) -> &str {
+            &self.0
+        }
+
         pub fn parse(value: &str) -> Result<Self, GitError> {
             if !matches!(value.len(), 40 | 64) || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
                 return Err(GitError::InvalidInput);
@@ -44,7 +48,7 @@ mod unix {
         IsAncestor(&'a ObjectId, &'a ObjectId),
         /// Recursive leaf entries; gitlinks are listed, never traversed.
         Tree(&'a ObjectId),
-        /// Stage and -v flags are evidence, not an index safety validation.
+        /// Stage, -v tags and debug flags; requires strict typed parsing.
         Index,
         /// Standard ignore rules apply only to this untracked enumeration.
         Untracked,
@@ -61,7 +65,7 @@ mod unix {
 
         fn output_limit(&self) -> usize {
             if self.records() {
-                MAX_PATHS * (MAX_RECORD_BYTES + 1)
+                MAX_PATHS * (MAX_RECORD_BYTES + 1 + 512)
             } else if matches!(self, Self::Blob(_)) {
                 MAX_FILE_BYTES
             } else {
@@ -74,11 +78,24 @@ mod unix {
     struct RecordBudget {
         count: usize,
         bytes: usize,
+        detail_lines: usize,
+        detail_bytes: usize,
+        index: bool,
     }
 
     impl RecordBudget {
         fn accept(&mut self, bytes: &[u8]) -> Result<(), GitError> {
             for &byte in bytes {
+                if self.detail_lines != 0 {
+                    self.detail_bytes += 1;
+                    if self.detail_bytes > 512 {
+                        return Err(GitError::Limit);
+                    }
+                    if byte == b'\n' {
+                        self.detail_lines -= 1;
+                    }
+                    continue;
+                }
                 if self.count == MAX_PATHS {
                     return Err(GitError::Limit);
                 }
@@ -88,6 +105,10 @@ mod unix {
                     }
                     self.count += 1;
                     self.bytes = 0;
+                    if self.index {
+                        self.detail_lines = 5;
+                        self.detail_bytes = 0;
+                    }
                 } else {
                     self.bytes += 1;
                     if self.bytes > MAX_RECORD_BYTES {
@@ -194,7 +215,10 @@ mod unix {
                     "credential.helper=",
                 ]);
             let records = operation.records();
-            let mut record_budget = RecordBudget::default();
+            let mut record_budget = RecordBudget {
+                index: matches!(operation, HistoryCommand::Index),
+                ..RecordBudget::default()
+            };
             let ancestry = matches!(operation, HistoryCommand::IsAncestor(_, _));
             let require_commit = matches!(operation, HistoryCommand::CommitExists(_));
             match operation {
@@ -214,7 +238,7 @@ mod unix {
                     command.args(["ls-tree", "-r", "-z", "--full-tree", &id.0]);
                 }
                 HistoryCommand::Index => {
-                    command.args(["ls-files", "--full-name", "--stage", "-v", "-z"]);
+                    command.args(["ls-files", "--full-name", "--stage", "-v", "--debug", "-z"]);
                 }
                 HistoryCommand::Untracked => {
                     command.args([
@@ -266,7 +290,8 @@ mod unix {
                     let affirmative = status.success();
                     if (!affirmative && !(ancestry && status.code() == Some(1)))
                         || (require_commit && output != b"commit\n")
-                        || (records && record_budget.bytes != 0)
+                        || (records
+                            && (record_budget.bytes != 0 || record_budget.detail_lines != 0))
                     {
                         return Err(GitError::Failed);
                     }
@@ -562,6 +587,28 @@ mod unix {
             budget.accept(b"").unwrap();
             assert_eq!(budget.accept(b"x"), Err(GitError::Limit));
             assert_eq!(RecordBudget::default().accept(b"\0"), Err(GitError::Failed));
+        }
+
+        #[test]
+        fn index_record_budget_bounds_and_frames_debug_details() {
+            let mut budget = RecordBudget {
+                index: true,
+                ..RecordBudget::default()
+            };
+            // Filenames can contain newlines; only the NUL starts debug lines.
+            for part in [
+                b"H header\tline\nname".as_slice(),
+                b"\0one\ntwo\n",
+                b"three\nfour\nfive\n",
+            ] {
+                budget.accept(part).unwrap();
+            }
+            assert_eq!(budget.count, 1);
+            assert_eq!(budget.bytes, 0);
+            assert_eq!(budget.detail_lines, 0);
+            budget.accept(b"next\0").unwrap();
+            budget.accept(&[b'x'; 512]).unwrap();
+            assert_eq!(budget.accept(b"\n"), Err(GitError::Limit));
         }
 
         #[test]
