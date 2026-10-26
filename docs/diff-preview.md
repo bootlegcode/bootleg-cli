@@ -46,7 +46,10 @@ Other non-Unix platforms fail closed. Git runs with a restricted environment,
 optional locks/lazy fetch/replacements/helpers/prompts/transports disabled, bounded
 output and operation deadlines. Source reads walk descriptor-relative components
 with `NOFOLLOW`, reject nonregular entries, reserve budgets before allocation and
-check file/directory identity and metadata before/after reading. HEAD, index,
+check file/directory identity and metadata before/after reading. A bounded,
+no-follow directory-entry inspection also rejects nonignored special files that
+Git intentionally omits from untracked listings; ignored directories are not
+entered. This inspection has a 100,000-entry work ceiling. HEAD, index,
 configuration, source enumeration, attributes and source metadata are rechecked
 before returning results. This is **not an atomic snapshot**: stop local writers;
 undetected concurrent edits remain possible. No checkout, stash, refresh, fetch,

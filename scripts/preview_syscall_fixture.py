@@ -15,7 +15,7 @@ def git(*args):
     return subprocess.check_output(["/usr/bin/git", *args], cwd=repo, text=True).strip()
 
 def snapshot():
-    return {str(p.relative_to(repo)): ("dir" if p.is_dir() else "link:" + os.readlink(p) if p.is_symlink() else hashlib.sha256(p.read_bytes()).hexdigest()) for p in repo.rglob("*")}
+    return {str(p.relative_to(repo)): ("dir" if p.is_dir() else "link:" + os.readlink(p) if p.is_symlink() else hashlib.sha256(p.read_bytes()).hexdigest() if p.is_file() else "special") for p in repo.rglob("*")}
 
 git("init", "-q")
 git("config", "user.email", "preview@example.invalid")
@@ -29,7 +29,7 @@ for key in ["core.fsmonitor", "diff.external", "diff.sentinel.textconv", "filter
 (repo / "file").write_text("changed\n")
 
 results = {}
-for case in ["regular", "sensitive", "symlink", "promisor"]:
+for case in ["regular", "sensitive", "symlink", "promisor", "special"]:
     if case == "sensitive":
         (repo / ".env").write_text("never-read-this")
     if case == "symlink":
@@ -41,6 +41,9 @@ for case in ["regular", "sensitive", "symlink", "promisor"]:
         (repo / "file").write_text("changed\n")
         git("config", "remote.origin.promisor", "true")
         git("config", "remote.origin.url", "https://unreachable.invalid/repository")
+    if case == "special":
+        git("config", "--unset", "remote.origin.promisor")
+        os.mkfifo(repo / "untracked-pipe")
     before = snapshot()
     trace = Path(f"/work/{case}.trace")
     p = subprocess.run(["strace", "-f", "-qq", "-s", "8192", "-o", str(trace),

@@ -71,6 +71,8 @@ fn attributes(bytes: &[u8], path: &str) -> Result<bool, Code> {
 pub struct Capture {
     directory: PathBuf,
     git: HistoryGit,
+    #[cfg(test)]
+    before_verify: Option<Box<dyn FnOnce()>>,
 }
 pub struct Snapshot {
     head: BuildCommit,
@@ -81,6 +83,8 @@ impl Capture {
         Ok(Self {
             directory,
             git: HistoryGit::new(git).map_err(git_error)?,
+            #[cfg(test)]
+            before_verify: None,
         })
     }
     fn run(&self, root: &Path, op: Op<'_>, deadline: Instant) -> Result<Vec<u8>, Code> {
@@ -199,6 +203,26 @@ impl SourceCapture for Capture {
             }
             trees.insert(baseline.as_str().to_owned(), tree);
         }
+        // Refuse gitlinks before directory inspection; never enter submodules.
+        for entry in index
+            .values()
+            .chain(head_tree.values())
+            .chain(trees.values().flat_map(|tree| tree.values()))
+        {
+            regular(entry.mode)?;
+        }
+        let special_gate = |source: &Root| {
+            source.special_gate(
+                |path| {
+                    self.git
+                        .run(&root, Op::Ignored(path), deadline)
+                        .map(|o| o.affirmative)
+                        .map_err(git_error)
+                },
+                deadline,
+            )
+        };
+        let directory_stamps = special_gate(&source)?;
         let mut budget = InputBudget::default();
         let mut files = BTreeMap::<String, Option<SourceFile>>::new();
         let mut stamps = BTreeMap::new();
@@ -285,11 +309,18 @@ impl SourceCapture for Capture {
         }
         // All comparisons share the captured bytes; verify source and Git
         // evidence before returning any successful target.
+        #[cfg(test)]
+        if let Some(hook) = self.before_verify.take() {
+            hook();
+        }
         let reopened = Root::open(&root)?;
         if source.root_stamp()? != root_stamp || reopened.root_stamp()? != root_stamp {
             return Err(Code::SourceChanged);
         }
         let reopened_admin = Root::open(&gitdir)?;
+        if special_gate(&reopened)? != directory_stamps {
+            return Err(Code::SourceChanged);
+        }
         for (path, before) in &stamps {
             preview_fs::deadline(deadline)?;
             if source.evidence(path)? != *before || reopened.evidence(path)? != *before {
@@ -319,5 +350,49 @@ impl SourceCapture for Capture {
         }
         preview_fs::deadline(deadline)?;
         Ok(Snapshot { head, changes })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_and_index_races_discard_the_entire_capture() {
+        for changed in ["file", ".git/index"] {
+            let dir = tempfile::tempdir().unwrap();
+            let git = |args: &[&str]| {
+                let result = std::process::Command::new("/usr/bin/git")
+                    .current_dir(dir.path())
+                    .env("GIT_CONFIG_NOSYSTEM", "1")
+                    .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(result.status.success());
+                String::from_utf8(result.stdout).unwrap().trim().to_owned()
+            };
+            git(&["init", "-q"]);
+            git(&["config", "user.email", "test@example.invalid"]);
+            git(&["config", "user.name", "Test"]);
+            std::fs::write(dir.path().join("file"), "original\n").unwrap();
+            git(&["add", "."]);
+            git(&["commit", "-qm", "initial"]);
+            let baseline = git(&["rev-parse", "HEAD"]).parse().unwrap();
+            let mut capture = Capture::new(dir.path().to_owned(), "/usr/bin/git".into()).unwrap();
+            let path = dir.path().join(changed);
+            // This hook exists only in test builds, after comparisons and before
+            // the production revalidation boundary; no scheduling race needed.
+            capture.before_verify = Some(Box::new(move || {
+                std::fs::write(path, "changed after capture\n").unwrap()
+            }));
+            assert!(matches!(
+                capture.capture(
+                    &[baseline],
+                    Instant::now() + std::time::Duration::from_secs(10)
+                ),
+                Err(Code::SourceChanged)
+            ));
+        }
     }
 }

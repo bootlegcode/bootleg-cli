@@ -47,6 +47,7 @@ mod unix {
         GitDirectory,
         SafetyConfig,
         Attributes(&'a str),
+        Ignored(&'a str),
         ObjectFormat,
         CommitExists(&'a ObjectId),
         IsAncestor(&'a ObjectId, &'a ObjectId),
@@ -132,7 +133,7 @@ mod unix {
 
     #[derive(Debug)]
     pub struct GitOutput {
-        /// False is meaningful only for IsAncestor (Git exit code 1).
+        /// Exit-code 1 is accepted only for ancestry, ignore and config queries.
         pub affirmative: bool,
         pub bytes: Vec<u8>,
     }
@@ -224,11 +225,14 @@ mod unix {
                     "-c",
                     "credential.helper=",
                 ]);
-            if let HistoryCommand::Attributes(path) = &operation {
+            if let HistoryCommand::Attributes(path) | HistoryCommand::Ignored(path) = &operation {
                 crate::preview::validate_path(path.as_bytes())
                     .map_err(|_| GitError::InvalidInput)?;
             }
-            let config = matches!(operation, HistoryCommand::SafetyConfig);
+            let config = matches!(
+                operation,
+                HistoryCommand::SafetyConfig | HistoryCommand::Ignored(_)
+            );
             let records = operation.records();
             let mut record_budget = RecordBudget {
                 index: matches!(operation, HistoryCommand::Index),
@@ -245,6 +249,19 @@ mod unix {
                 }
                 HistoryCommand::SafetyConfig => {
                     command.args(["config", "--null", "--get-regexp", "^(core\\.(bare|sparsecheckout|sparsecheckoutcone)|extensions\\.(worktreeconfig|partialclone)|remote\\..*\\.promisor)$"]);
+                }
+                HistoryCommand::Ignored(path) => {
+                    // check-ignore accepts literal pathnames but rejects the
+                    // global literal-pathspec magic used by other plumbing.
+                    // Prefix ./ so a pathname beginning with ':' is not magic.
+                    command.args([
+                        "--no-literal-pathspecs",
+                        "check-ignore",
+                        "--quiet",
+                        "--no-index",
+                        "--",
+                        &format!("./{path}"),
+                    ]);
                 }
                 HistoryCommand::Attributes(path) => {
                     command.args([

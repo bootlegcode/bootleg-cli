@@ -116,6 +116,82 @@ impl Root {
         Err(Code::UnsupportedEntry)
     }
 
+    /// Git intentionally omits untrackable special files from ls-files. Inspect
+    /// directory entries (not contents) so a nonignored FIFO/socket/device cannot
+    /// silently produce a clean preview. Never descend into ignored directories.
+    pub fn special_gate(
+        &self,
+        mut ignored: impl FnMut(&str) -> Result<bool, Code>,
+        limit: Instant,
+    ) -> Result<std::collections::BTreeMap<String, Stamp>, Code> {
+        fn visit(
+            fd: &OwnedFd,
+            prefix: &str,
+            ignored: &mut impl FnMut(&str) -> Result<bool, Code>,
+            limit: Instant,
+            count: &mut usize,
+            directories: &mut std::collections::BTreeMap<String, Stamp>,
+        ) -> Result<(), Code> {
+            deadline(limit)?;
+            let before = stamp(&fs::fstat(fd).map_err(error)?);
+            let mut dir = fs::Dir::read_from(fd).map_err(error)?;
+            for entry in &mut dir {
+                deadline(limit)?;
+                let entry = entry.map_err(error)?;
+                let name = entry.file_name().to_bytes();
+                if matches!(name, b"." | b"..") || name.eq_ignore_ascii_case(b".git") {
+                    continue;
+                }
+                *count += 1;
+                if *count > preview::MAX_PATHS {
+                    return Err(Code::LimitExceeded);
+                }
+                // Regular files and symlinks are enumerated by Git. No need to
+                // check their ignore rules twice or open ignored file contents.
+                if matches!(entry.file_type(), FileType::RegularFile | FileType::Symlink) {
+                    continue;
+                }
+                let name = std::str::from_utf8(name).map_err(|_| Code::UnsupportedEntry)?;
+                let path = if prefix.is_empty() {
+                    name.to_owned()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                preview::validate_path(path.as_bytes())?;
+                if ignored(&path)? {
+                    continue;
+                }
+                let stat = fs::statat(fd, name, AtFlags::SYMLINK_NOFOLLOW).map_err(error)?;
+                match FileType::from_raw_mode(stat.st_mode) {
+                    FileType::RegularFile | FileType::Symlink => {}
+                    FileType::Directory => {
+                        preview::allow_source_read(path.as_bytes(), false)?;
+                        let child = fs::openat(
+                            fd,
+                            name,
+                            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+                            Mode::empty(),
+                        )
+                        .map_err(error)?;
+                        if stamp(&fs::fstat(&child).map_err(error)?) != stamp(&stat) {
+                            return Err(Code::SourceChanged);
+                        }
+                        visit(&child, &path, ignored, limit, count, directories)?;
+                    }
+                    _ => return Err(Code::UnsupportedEntry),
+                }
+            }
+            if stamp(&fs::fstat(fd).map_err(error)?) != before {
+                return Err(Code::SourceChanged);
+            }
+            directories.insert(prefix.to_owned(), before);
+            Ok(())
+        }
+        let mut directories = std::collections::BTreeMap::new();
+        visit(&self.fd, "", &mut ignored, limit, &mut 0, &mut directories)?;
+        Ok(directories)
+    }
+
     pub fn root_stamp(&self) -> Result<Stamp, Code> {
         fs::fstat(&self.fd).map(|s| stamp(&s)).map_err(error)
     }

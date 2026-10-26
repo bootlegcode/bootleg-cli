@@ -59,10 +59,15 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
                         .as_encoded_bytes()
                         .to_vec(),
                 );
-            } else {
+            } else if e.file_type().unwrap().is_file() {
                 out.insert(
                     p.strip_prefix(root).unwrap().to_owned(),
                     std::fs::read(p).unwrap(),
+                );
+            } else {
+                out.insert(
+                    p.strip_prefix(root).unwrap().to_owned(),
+                    b"special".to_vec(),
                 );
             }
         }
@@ -159,6 +164,8 @@ fn unsupported_changes_and_sensitive_paths_fail_closed() {
         "oversize",
         "sparse",
         "promisor",
+        "gitlink",
+        "fifo",
     ] {
         let (d, base) = repo();
         let expected = match scenario {
@@ -200,16 +207,69 @@ fn unsupported_changes_and_sensitive_paths_fail_closed() {
                 git(d.path(), &["config", "remote.origin.promisor", "true"]);
                 Code::UnsupportedRepository
             }
+            "gitlink" => {
+                git(
+                    d.path(),
+                    &[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        &format!("160000,{},module", base.as_str()),
+                    ],
+                );
+                std::fs::create_dir(d.path().join("module")).unwrap();
+                std::fs::write(d.path().join("module/dirty-untracked"), "must not traverse")
+                    .unwrap();
+                Code::UnsupportedEntry
+            }
+            "fifo" => {
+                assert!(
+                    Command::new("/usr/bin/mkfifo")
+                        .arg(d.path().join("pipe"))
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                Code::UnsupportedEntry
+            }
             _ => unreachable!(),
         };
         let before = snapshot(d.path());
-        assert!(
-            matches!(capture(d.path(), &[base]), Err(e) if e == expected),
-            "{scenario}"
-        );
+        let error = capture(d.path(), &[base]).err();
+        assert_eq!(error, Some(expected), "{scenario}");
         assert_eq!(before, snapshot(d.path()));
     }
 }
+#[test]
+fn special_file_gate_honors_ignored_directories_and_literal_directory_names() {
+    let (d, base) = repo();
+    std::fs::create_dir_all(d.path().join(":(literal)dir/deep")).unwrap();
+    std::fs::write(d.path().join(":(literal)dir/deep/file"), "new\n").unwrap();
+    std::fs::create_dir(d.path().join("ignored")).unwrap();
+    std::fs::write(d.path().join(".gitignore"), "ignored/\nignored-pipe\n").unwrap();
+    for path in ["ignored/pipe", "ignored-pipe"] {
+        assert!(
+            Command::new("/usr/bin/mkfifo")
+                .arg(d.path().join(path))
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+    assert!(capture(d.path(), std::slice::from_ref(&base)).is_ok());
+    assert!(
+        Command::new("/usr/bin/mkfifo")
+            .arg(d.path().join(":(literal)dir/deep/pipe"))
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(matches!(
+        capture(d.path(), &[base]),
+        Err(Code::UnsupportedEntry)
+    ));
+}
+
 #[test]
 fn cumulative_capture_budget_and_missing_blob_are_fail_closed() {
     let (d, base) = repo();
