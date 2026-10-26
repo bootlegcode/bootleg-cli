@@ -84,7 +84,7 @@ def verify_preview(base, env, home, org, smuggler, children, log, outsider_env, 
     assert project_id.startswith("project_") and project_id.replace("_", "").isalnum()
     sql = f"""INSERT INTO container_presence(project_id, container_id, record, retain_until)
         SELECT project_id, 'container_' || repeat('0',23) || lpad(to_hex(n),3,'0'),
-            jsonb_set(record, '{{container_id}}', to_jsonb('container_' || repeat('0',23) || lpad(to_hex(n),3,'0'))),
+            jsonb_set(record, '{{metadata,container_id}}', to_jsonb('container_' || repeat('0',23) || lpad(to_hex(n),3,'0'))),
             now() + interval '1 hour'
         FROM (SELECT project_id, record FROM container_presence WHERE project_id='{project_id}' LIMIT 1) seed,
             generate_series(1,201) n"""
