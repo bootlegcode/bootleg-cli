@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
+import uuid
 
 
 def verify_preview(base, env, home, org, smuggler, children, log, outsider_env, postgres):
@@ -82,12 +83,20 @@ def verify_preview(base, env, home, org, smuggler, children, log, outsider_env, 
     # Real-store retained/offline metadata fixtures force the registered selected
     # targets onto a later API page. No HTTP or WebSocket responses are mocked.
     assert project_id.startswith("project_") and project_id.replace("_", "").isalnum()
+    # Canonical TypeID encoding requires UUIDv4 version/variant bits, not merely
+    # 26 base32 characters. Small v4 UUIDs sort before our random registered IDs.
+    alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
+    ids = []
+    for n in range(1, 202):
+        value = uuid.UUID(int=n, version=4).int
+        ids.append("container_" + "".join(alphabet[(value >> shift) & 31] for shift in range(125, -1, -5)))
+    values = ",".join("('" + cid + "')" for cid in ids)
     sql = f"""INSERT INTO container_presence(project_id, container_id, record, retain_until)
-        SELECT project_id, 'container_' || repeat('0',23) || lpad(to_hex(n),3,'0'),
-            jsonb_set(record, '{{metadata,container_id}}', to_jsonb('container_' || repeat('0',23) || lpad(to_hex(n),3,'0'))),
+        SELECT project_id, fixture.id,
+            jsonb_set(record, '{{metadata,container_id}}', to_jsonb(fixture.id)),
             now() + interval '1 hour'
         FROM (SELECT project_id, record FROM container_presence WHERE project_id='{project_id}' LIMIT 1) seed,
-            generate_series(1,201) n"""
+            (VALUES {values}) fixture(id)"""
     subprocess.run(["docker", "exec", postgres, "psql", "-U", "postgres", "-d", "cli_test", "-v", "ON_ERROR_STOP=1", "-c", sql],
                    check=True, stdout=log, stderr=log, timeout=30)
     assert len(instances()) == 205
