@@ -1,4 +1,4 @@
-//! Restricted, bounded Git history plumbing for preview. Not a source-capture adapter.
+//! Restricted, bounded Git plumbing for preview. Not a source-capture adapter.
 //! Unix sockets keep output reads nonblocking without reader threads or temporary files.
 #[cfg(unix)]
 mod unix {
@@ -11,6 +11,10 @@ mod unix {
 
     const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
     const MAX_OUTPUT: usize = 4096;
+    use crate::preview::{MAX_FILE_BYTES, MAX_PATH_BYTES, MAX_PATHS};
+
+    // Mode/type/object-ID/stage/tag separators, in addition to the path itself.
+    const MAX_RECORD_BYTES: usize = MAX_PATH_BYTES + 96;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum GitError {
@@ -38,6 +42,61 @@ mod unix {
         ObjectFormat,
         CommitExists(&'a ObjectId),
         IsAncestor(&'a ObjectId, &'a ObjectId),
+        /// Recursive leaf entries; gitlinks are listed, never traversed.
+        Tree(&'a ObjectId),
+        /// Stage and -v flags are evidence, not an index safety validation.
+        Index,
+        /// Standard ignore rules apply only to this untracked enumeration.
+        Untracked,
+        BlobSize(&'a ObjectId),
+        /// Raw object bytes, without filters or textconv. Caller reserves the
+        /// cumulative input budget and checks sensitive paths before requesting.
+        Blob(&'a ObjectId),
+    }
+
+    impl HistoryCommand<'_> {
+        fn records(&self) -> bool {
+            matches!(self, Self::Tree(_) | Self::Index | Self::Untracked)
+        }
+
+        fn output_limit(&self) -> usize {
+            if self.records() {
+                MAX_PATHS * (MAX_RECORD_BYTES + 1)
+            } else if matches!(self, Self::Blob(_)) {
+                MAX_FILE_BYTES
+            } else {
+                MAX_OUTPUT
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordBudget {
+        count: usize,
+        bytes: usize,
+    }
+
+    impl RecordBudget {
+        fn accept(&mut self, bytes: &[u8]) -> Result<(), GitError> {
+            for &byte in bytes {
+                if self.count == MAX_PATHS {
+                    return Err(GitError::Limit);
+                }
+                if byte == 0 {
+                    if self.bytes == 0 {
+                        return Err(GitError::Failed);
+                    }
+                    self.count += 1;
+                    self.bytes = 0;
+                } else {
+                    self.bytes += 1;
+                    if self.bytes > MAX_RECORD_BYTES {
+                        return Err(GitError::Limit);
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 
     #[derive(Debug)]
@@ -69,13 +128,17 @@ mod unix {
             Ok(Self { executable })
         }
 
+        /// Source enumeration requires a previously validated worktree root as
+        /// `directory`; this runner does not discover or validate repositories.
+        /// Returned bytes are internal evidence, never user-facing diagnostics.
         pub fn run(
             &self,
             directory: &Path,
             operation: HistoryCommand<'_>,
             invocation_deadline: Instant,
         ) -> Result<GitOutput, GitError> {
-            self.run_bounded(directory, operation, invocation_deadline, MAX_OUTPUT)
+            let limit = operation.output_limit();
+            self.run_bounded(directory, operation, invocation_deadline, limit)
         }
 
         fn run_bounded(
@@ -130,6 +193,8 @@ mod unix {
                     "-c",
                     "credential.helper=",
                 ]);
+            let records = operation.records();
+            let mut record_budget = RecordBudget::default();
             let ancestry = matches!(operation, HistoryCommand::IsAncestor(_, _));
             let require_commit = matches!(operation, HistoryCommand::CommitExists(_));
             match operation {
@@ -144,6 +209,27 @@ mod unix {
                 }
                 HistoryCommand::IsAncestor(base, head) => {
                     command.args(["merge-base", "--is-ancestor", &base.0, &head.0]);
+                }
+                HistoryCommand::Tree(id) => {
+                    command.args(["ls-tree", "-r", "-z", "--full-tree", &id.0]);
+                }
+                HistoryCommand::Index => {
+                    command.args(["ls-files", "--full-name", "--stage", "-v", "-z"]);
+                }
+                HistoryCommand::Untracked => {
+                    command.args([
+                        "ls-files",
+                        "--full-name",
+                        "--others",
+                        "--exclude-standard",
+                        "-z",
+                    ]);
+                }
+                HistoryCommand::BlobSize(id) => {
+                    command.args(["cat-file", "-s", &id.0]);
+                }
+                HistoryCommand::Blob(id) => {
+                    command.args(["cat-file", "blob", &id.0]);
                 }
             }
             let mut child = Running(command.spawn().map_err(|_| GitError::Failed)?);
@@ -163,6 +249,9 @@ mod unix {
                             if count > output_limit.saturating_sub(output.len()) {
                                 return Err(GitError::Limit);
                             }
+                            if records {
+                                record_budget.accept(&scratch[..count])?;
+                            }
                             output.extend_from_slice(&scratch[..count]);
                             continue;
                         }
@@ -177,6 +266,7 @@ mod unix {
                     let affirmative = status.success();
                     if (!affirmative && !(ancestry && status.code() == Some(1)))
                         || (require_commit && output != b"commit\n")
+                        || (records && record_budget.bytes != 0)
                     {
                         return Err(GitError::Failed);
                     }
@@ -347,6 +437,131 @@ mod unix {
                 );
                 assert!(start.elapsed() < Duration::from_secs(2));
             }
+        }
+
+        #[test]
+        fn actual_source_plumbing_is_raw_bounded_and_read_only() {
+            let dir = tempfile::tempdir().unwrap();
+            git(dir.path(), &["init", "-q"]);
+            git(
+                dir.path(),
+                &["config", "user.email", "test@example.invalid"],
+            );
+            git(dir.path(), &["config", "user.name", "Test"]);
+            let unusual = "-tab\tline\n雪.txt";
+            let raw = b"raw\r\ntext without final newline";
+            std::fs::write(dir.path().join(unusual), raw).unwrap();
+            std::fs::write(dir.path().join(".gitignore"), "ignored\n").unwrap();
+            git(dir.path(), &["add", "--", "."]);
+            git(dir.path(), &["commit", "-qm", "source"]);
+            let head = ObjectId::parse(&git(dir.path(), &["rev-parse", "HEAD"])).unwrap();
+            let blob =
+                ObjectId::parse(&git(dir.path(), &["rev-parse", &format!("HEAD:{unusual}")]))
+                    .unwrap();
+            // Configure helpers only after fixture creation. None may run during reads.
+            for (key, value) in [
+                ("core.fsmonitor", "touch helper-ran"),
+                ("diff.external", "touch helper-ran"),
+                ("diff.sentinel.textconv", "touch helper-ran"),
+                ("filter.sentinel.clean", "touch helper-ran"),
+                ("filter.sentinel.smudge", "touch helper-ran"),
+            ] {
+                git(dir.path(), &["config", key, value]);
+            }
+            std::fs::write(
+                dir.path().join(".gitattributes"),
+                "*.txt filter=sentinel diff=sentinel\n",
+            )
+            .unwrap();
+            std::fs::write(dir.path().join(unusual), "worktree differs").unwrap();
+            std::fs::write(dir.path().join("untracked\nname"), "new").unwrap();
+            std::fs::write(dir.path().join("ignored"), "excluded").unwrap();
+            let before = snapshot(dir.path());
+            let runner = HistoryGit::new("/usr/bin/git".into()).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let tree = runner
+                .run(dir.path(), HistoryCommand::Tree(&head), deadline)
+                .unwrap()
+                .bytes;
+            assert!(
+                tree.split(|&b| b == 0)
+                    .any(|r| r.ends_with(format!("\t{unusual}").as_bytes()))
+            );
+            let index = runner
+                .run(dir.path(), HistoryCommand::Index, deadline)
+                .unwrap()
+                .bytes;
+            assert!(
+                index.split(|&b| b == 0).any(|r| r.starts_with(b"H 100644 ")
+                    && r.ends_with(format!(" 0\t{unusual}").as_bytes()))
+            );
+            let untracked = runner
+                .run(dir.path(), HistoryCommand::Untracked, deadline)
+                .unwrap()
+                .bytes;
+            assert_eq!(untracked, b".gitattributes\0untracked\nname\0");
+            assert_eq!(
+                runner
+                    .run(dir.path(), HistoryCommand::BlobSize(&blob), deadline)
+                    .unwrap()
+                    .bytes,
+                format!("{}\n", raw.len()).as_bytes()
+            );
+            assert_eq!(
+                runner
+                    .run(dir.path(), HistoryCommand::Blob(&blob), deadline)
+                    .unwrap()
+                    .bytes,
+                raw
+            );
+            assert_eq!(
+                runner
+                    .run_bounded(dir.path(), HistoryCommand::Tree(&head), deadline, 1)
+                    .unwrap_err(),
+                GitError::Limit
+            );
+            assert_eq!(before, snapshot(dir.path()));
+            assert!(!dir.path().join("helper-ran").exists());
+        }
+
+        #[test]
+        fn actual_blob_reads_enforce_size_and_preserve_binary_bytes() {
+            let dir = tempfile::tempdir().unwrap();
+            git(dir.path(), &["init", "-q"]);
+            let path = dir.path().join("binary");
+            let runner = HistoryGit::new("/usr/bin/git".into()).unwrap();
+            for size in [MAX_FILE_BYTES, MAX_FILE_BYTES + 1] {
+                std::fs::write(&path, vec![0; size]).unwrap();
+                let id =
+                    ObjectId::parse(&git(dir.path(), &["hash-object", "-w", "binary"])).unwrap();
+                let before = snapshot(dir.path());
+                let result = runner.run(
+                    dir.path(),
+                    HistoryCommand::Blob(&id),
+                    Instant::now() + Duration::from_secs(10),
+                );
+                if size == MAX_FILE_BYTES {
+                    assert_eq!(result.unwrap().bytes, vec![0; size]);
+                } else {
+                    assert_eq!(result.unwrap_err(), GitError::Limit);
+                }
+                assert_eq!(before, snapshot(dir.path()));
+            }
+        }
+
+        #[test]
+        fn record_budgets_are_incremental_and_fail_before_retention() {
+            let mut budget = RecordBudget::default();
+            budget.accept(&vec![b'x'; MAX_RECORD_BYTES]).unwrap();
+            assert_eq!(budget.accept(b"x"), Err(GitError::Limit));
+            let mut budget = RecordBudget::default();
+            for _ in 0..MAX_PATHS {
+                budget.accept(b"x").unwrap();
+                budget.accept(b"\0").unwrap();
+            }
+            budget.accept(b"").unwrap();
+            assert_eq!(budget.accept(b"x"), Err(GitError::Limit));
+            assert_eq!(RecordBudget::default().accept(b"\0"), Err(GitError::Failed));
         }
 
         #[test]

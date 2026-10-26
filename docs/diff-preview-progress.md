@@ -46,9 +46,9 @@ pins and wire contracts are unchanged.
 1. Validate the implemented authorized HTTP adapter against the real web/stores
    and registered agents (including authorization, pagination and timeout cases).
    Bounded traversal is implemented; real-server evidence remains outstanding.
-2. Extend the restricted history process adapter below for bounded tree/index/blob
-   plumbing, and validate promisor/shallow/replacement cases and isolated syscall
-   evidence. Select a trusted Git executable and map adapter errors at integration.
+2. Integrate the bounded tree/index/blob plumbing below with typed evidence parsing;
+   validate promisor/shallow/replacement cases and isolated syscall evidence.
+   Select a trusted Git executable and map adapter errors at integration.
 3. Actual Git object/history and index/tree enumeration, including unmerged,
    intent-to-add, sparse, assume-unchanged and skip-worktree rejection; raw blob
    reads and changed-path attribute checks without filters/textconv.
@@ -154,5 +154,39 @@ submodule gates, no-follow shared source capture and race checks, error projecti
 CLI/rendering integration, full repository matrix and registered-agent acceptance.
 Non-Unix platforms have no adapter yet; integration must reject unsupported ones.
 No `bootleg diff` command is exposed; the milestone remains open.
+
+## Bounded source plumbing increment
+
+`src/preview_git.rs` now also supports closed operations for recursive NUL-delimited
+leaf trees, NUL-delimited index stages/flags, standard-ignore untracked enumeration,
+object sizes and raw blobs. All use the existing restricted process environment,
+deadlines and cleanup. No diff/filter/textconv command is used.
+
+- Enumeration checks records incrementally before retaining each output chunk:
+  at most 100,000 records, each at most 4,096 path bytes plus a 96-byte plumbing
+  header allowance. Empty or unterminated records fail. The typed parser must
+  still enforce the exact path-byte limit and validate headers, modes and IDs.
+- Raw blob output is capped at 1 MiB, including when size preflight was skipped;
+  binary bytes are preserved internally for later domain rejection, not rendered.
+- The caller must validate/pass the repository root, enforce the union-of-paths
+  and cumulative distinct-input budgets, gate sensitive paths before blob reads,
+  and reject unsafe repository/index state. These operations alone do none of
+  those checks. Index stage/-v evidence does not yet detect intent-to-add.
+- Three new tests exercise actual temporary-repository enumeration and raw reads,
+  unusual paths, untracked ignore rules, worktree/blob separation, helper sentinel
+  configuration, exact/over-limit binary blobs, incremental record bounds, and
+  before/after file-byte and directory-entry snapshots.
+
+Validation: `cargo test --locked` (61 passed, 4 explicitly ignored),
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
+`git diff --check` passed. No other repositories or dependency pins changed.
+Full pinned registration acceptance was not rerun for this unexposed increment.
+Snapshots do not prove the absence of transient writes or network attempts.
+
+Still required: typed enumeration/evidence parsing, repository/index/attribute and
+submodule gates, no-follow shared capture and race checks, error projection and
+CLI integration, remaining real-repository/helper/syscall/network tests, real-server
+authorization and full pinned acceptance. No `bootleg diff` command is exposed;
+the milestone remains open.
 
 The v1 design remains the contract; this progress note does not relax its gates.
