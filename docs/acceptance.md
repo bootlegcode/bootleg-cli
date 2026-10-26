@@ -1,5 +1,13 @@
 # Registration acceptance checkpoint
 
+## Initial registration evidence
+
+Initial full registration acceptance used CLI `f29e2cc` and web `515974d`.
+[Exact historical revisions and cross-repository scope](../../bootleg-core/docs/registration-evidence.md)
+and the [sanitized successful report](../.pi/acceptance/bootleg-acceptance-d045c3a7f1ac/report.json)
+record `registration_complete: true` and completed cleanup. Later checkpoints below
+are separate evidence; documentation reconciliation does not rerun those tests.
+
 ## Read-only diff preview checkpoint
 
 The complete pinned `--kind` registration suite remains green after exposing
@@ -55,6 +63,11 @@ before building; it never checks out/reset repositories for you:
 | smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
 | CLI | `414c6caf5b6b02ba7c5eff06bff24bd966f6b355` (read-only preview checkpoint) |
 
+The table records the last executed preview checkpoint, not necessarily current
+HEAD. Documentation-only reconciliation subsequently advances dependency pins;
+[`scripts/acceptance-revisions.json`](../scripts/acceptance-revisions.json) is the
+current enforced set. These pin changes do not claim a new acceptance run.
+
 Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
 recorded in the report. Untracked handoff documents are preserved, not removed.
 
@@ -105,7 +118,8 @@ and secret source files live in the private temporary home.
 `--kind` completed successfully on macOS. **Registration acceptance is green at this
 checkpoint**, with the evidence levels below. Capacity/load evidence is reported
 separately in [presence-capacity.md](presence-capacity.md). This does not claim a
-complete web CI pass, file synchronization or diff preview.
+complete web CI pass or file synchronization. Separate read-only diff preview
+evidence is linked above.
 
 | Scenario | Result / evidence level |
 | --- | --- |
@@ -186,9 +200,9 @@ listed after successful runs.
 - `just test` in web: 109 passed, 61 skipped. Full web integration: infrastructure
   43 passed; account/view suite 8 passed, 3 failed on unchanged dashboard markup
   expectations; later security suite not reached. Workspace formatting check also
-  reports existing drift. See `../bootleg-web/docs/registration-acceptance.md`.
+  reports existing drift. See [web acceptance](../../bootleg-web/docs/registration-acceptance.md).
 - Phase 2 quota/concurrent-admission regressions and measured snapshot capacity are
   complete for the explicitly bounded envelope in `presence-capacity.md`. The
   few-agent registration scenarios alone do not establish capacity.
-- Coordinated CI and remaining core/smuggler documentation reconciliation are open.
-  Diff preview is not implemented; no transfer or remote mutation was added.
+- Core/smuggler documentation reconciliation and read-only diff preview are complete.
+  Coordinated CI remains open; no transfer or remote mutation was added.
