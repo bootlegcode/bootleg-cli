@@ -7,5 +7,6 @@ pub mod git;
 pub mod http;
 pub mod preview;
 pub mod preview_application;
+pub mod preview_git;
 pub mod selection;
 pub mod storage;

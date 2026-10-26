@@ -46,9 +46,9 @@ pins and wire contracts are unchanged.
 1. Validate the implemented authorized HTTP adapter against the real web/stores
    and registered agents (including authorization, pagination and timeout cases).
    Bounded traversal is implemented; real-server evidence remains outstanding.
-2. Hardened Git process adapter: command/environment allowlist, optional-lock,
-   lazy-fetch, replacement, prompt, pager, fsmonitor and helper suppression;
-   bounded streaming output, per-operation 30s and invocation 120s deadlines.
+2. Extend the restricted history process adapter below for bounded tree/index/blob
+   plumbing, and validate promisor/shallow/replacement cases and isolated syscall
+   evidence. Select a trusted Git executable and map adapter errors at integration.
 3. Actual Git object/history and index/tree enumeration, including unmerged,
    intent-to-add, sparse, assume-unchanged and skip-worktree rejection; raw blob
    reads and changed-path attribute checks without filters/textconv.
@@ -123,5 +123,36 @@ this unexposed adapter increment. No dependency pins or wire contracts changed.
 Git/process and no-follow filesystem capture, CLI integration, real-repository
 safety evidence and registered-agent acceptance still remain. No diff command is
 exposed; the milestone stays open.
+
+## Restricted Git history process increment
+
+`src/preview_git.rs` adds a Unix-only history runner, not yet wired to capture:
+
+- Closed command enum for HEAD, object format, full-ID commit existence and
+  ancestry. Reject revision expressions/options as IDs and relative executables.
+- Clear inherited environment, preserving only HOME/XDG_CONFIG_HOME for user Git
+  configuration; explicitly disable optional locks, lazy fetch, replacements,
+  prompts, pager, fsmonitor, hooks and transport protocols. No shell invocation,
+  stdin, raw diagnostics or arbitrary command arguments.
+- Nonblocking Unix socket output capture, fixed scratch buffer, 4 KiB output
+  ceiling, 30s operation/shared invocation deadline minimum, and kill/reap cleanup
+  on failure. No reader threads, temporary output/index files or new dependencies.
+- Three tests cover actual temporary-repository history/missing objects, full
+  file-byte/directory-entry before/after snapshots, helper sentinel configuration,
+  invalid inputs, output limits, and blocked/streaming/failed process fixtures.
+
+Validation: `cargo test --locked` (58 passed, 4 explicitly ignored),
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
+`git diff --check` passed. Process fixtures test runner mechanics only; they do not
+replace real Git semantics or real-server acceptance. The snapshot test does not
+prove absence of transient writes; isolated syscall/network evidence, promisor and
+replacement scenarios remain outstanding. Full pinned registration acceptance was
+not rerun for this unexposed increment. Other repositories and pins are unchanged.
+
+Still required: bounded tree/index/blob operations, repository/index/attribute and
+submodule gates, no-follow shared source capture and race checks, error projection,
+CLI/rendering integration, full repository matrix and registered-agent acceptance.
+Non-Unix platforms have no adapter yet; integration must reject unsupported ones.
+No `bootleg diff` command is exposed; the milestone remains open.
 
 The v1 design remains the contract; this progress note does not relax its gates.
