@@ -1,4 +1,7 @@
 //! HTTPS adapter. Redirects and automatic retries are disabled, including mutations.
+mod preview;
+pub use preview::InstanceDiscovery;
+
 use crate::domain::{ApiOrigin, terminal_text};
 use bootleg_core::{
     SecretString,

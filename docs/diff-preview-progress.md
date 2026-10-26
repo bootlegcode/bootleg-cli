@@ -43,10 +43,9 @@ pins and wire contracts are unchanged.
 
 ### Remaining before the milestone can close
 
-1. Implement the authorized HTTP adapter for the application discovery port below.
-   Charge its sink before response buffering/decoding and honor the shared deadline.
-   The application ports/orchestration and incremental budget sink are implemented;
-   actual bounded HTTP traversal is not yet implemented.
+1. Validate the implemented authorized HTTP adapter against the real web/stores
+   and registered agents (including authorization, pagination and timeout cases).
+   Bounded traversal is implemented; real-server evidence remains outstanding.
 2. Hardened Git process adapter: command/environment allowlist, optional-lock,
    lazy-fetch, replacement, prompt, pager, fsmonitor and helper suppression;
    bounded streaming output, per-operation 30s and invocation 120s deadlines.
@@ -94,5 +93,35 @@ Validation: `cargo test --locked` (50 passed, 4 explicitly ignored),
 `cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
 `git diff --check`. Full pinned registration acceptance was not rerun for this
 library-only increment.
+
+## HTTP discovery increment
+
+`src/http/preview.rs` implements `AuthorizedDiscovery` as `InstanceDiscovery`,
+using the existing origin-scoped authenticated client and an explicit ProjectId:
+
+- Only GET the authorized instances endpoint, with mandatory client headers,
+  redirects/retries disabled and no login, refresh or mutation calls.
+- Charge pages before requests and cumulative body bytes before growing the
+  response buffer; read with a fixed 8 KiB scratch buffer. Each request's total
+  timeout is the smaller of 30 seconds and the remaining invocation deadline.
+- Decode only preview metadata, skipping labels/runtime/session fields. Bound
+  each decoded page to the requested 200 records; charge records before retaining
+  selected metadata in the sink. Reject wrong-project records, repeated cursors,
+  missing pagination, invalid responses and incomplete traversal.
+- Require protocol version 1. Map failures to static preview codes; never expose
+  response error bodies, credentials or transport diagnostic strings.
+
+Five unit tests cover cumulative byte accounting, deadline-before-read behavior,
+mandatory pagination/duplicate fields, bounded metadata projection, and missing
+credentials before requests. No mock API/WS servers were introduced. These tests
+are **not** real-server pagination, authorization or blocked-I/O timeout evidence.
+
+Validation: `cargo test --locked` (55 passed, 4 explicitly ignored),
+`cargo clippy --all-targets --locked -- -D warnings`, `cargo fmt --check`, and
+`git diff --check` passed. Full pinned registration acceptance was not rerun for
+this unexposed adapter increment. No dependency pins or wire contracts changed.
+Git/process and no-follow filesystem capture, CLI integration, real-repository
+safety evidence and registered-agent acceptance still remain. No diff command is
+exposed; the milestone stays open.
 
 The v1 design remains the contract; this progress note does not relax its gates.
