@@ -14,6 +14,15 @@ pins deliberately alongside compatibility changes. GitHub Actions are commit
 pinned. Cargo/npm use lockfiles. Container base tags and transitive tool installers
 are not claimed to be fully reproducible supply-chain pins.
 
+## Private core checkout authentication
+
+CLI, web and smuggler require Actions secret `BOOTLEG_REPO_READ_TOKEN`: a
+fine-grained token restricted to `bootlegcode/bootleg-core`, Contents read-only.
+The default repository-scoped Actions token cannot fetch this private sibling.
+Deploy keys are disabled by repository policy. Do not install a broad personal
+admin token as a workaround. Fork PRs do not receive this secret and cannot run
+these private-dependency checks without a separate trusted review workflow.
+
 ## Full registration runner
 
 `registration.yml` runs manually or weekly, only on `main`, and only when repository
