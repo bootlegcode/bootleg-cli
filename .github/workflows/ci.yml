@@ -1,0 +1,28 @@
+name: CLI checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: bootleg-cli
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: bootleg-cli
+          persist-credentials: false
+      - id: pins
+        run: echo "core=$(jq -er '."bootleg-core"' scripts/acceptance-revisions.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: bootlegcode/bootleg-core
+          ref: ${{ steps.pins.outputs.core }}
+          path: bootleg-core
+          persist-credentials: false
+      - run: rustup toolchain install 1.98.1 --profile minimal --component rustfmt,clippy && rustup default 1.98.1
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: python3 scripts/test-ci-registration.py

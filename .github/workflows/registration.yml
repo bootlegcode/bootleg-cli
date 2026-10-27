@@ -1,0 +1,61 @@
+name: Full pinned registration
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 6 * * 1'
+permissions:
+  contents: read
+concurrency:
+  group: full-registration
+  cancel-in-progress: false
+jobs:
+  registration:
+    # Never run PR code on a privileged Docker Desktop runner.
+    if: vars.REGISTRATION_RUNNER_ENABLED == 'true' && github.ref == 'refs/heads/main'
+    environment: registration-acceptance
+    runs-on: [self-hosted, macOS, bootleg-registration-ephemeral]
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: bootleg-cli
+          persist-credentials: false
+      - name: Fetch only exact sibling commits from the committed manifest
+        working-directory: bootleg-cli
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, re, subprocess
+          pins = json.loads(pathlib.Path('scripts/acceptance-revisions.json').read_text())
+          assert set(pins) == {'bootleg-core', 'bootleg-web', 'bootleg-smuggler'}
+          for name, sha in pins.items():
+              assert re.fullmatch('[0-9a-f]{40}', sha)
+              path = pathlib.Path('..') / name
+              path.mkdir()  # stale sibling checkout is a hard error
+              subprocess.run(['git', 'init', str(path)], check=True)
+              subprocess.run(['git', '-C', str(path), 'fetch', '--depth=1',
+                              f'https://github.com/bootlegcode/{name}.git', sha], check=True)
+              subprocess.run(['git', '-C', str(path), 'checkout', '--detach', sha], check=True)
+          PY
+      - name: Verify provisioned runner prerequisites
+        run: |
+          test "$(uname -s)" = Darwin
+          test "$(rustc --version | awk '{print $2}')" = 1.98.1
+          kind version | grep -F v0.33.0
+          cargo nextest --version
+          kubectl version --client
+          fzf --version
+          docker info >/dev/null
+          docker compose version
+      - working-directory: bootleg-web
+        run: npm ci && npx --no-install playwright install chromium
+      - name: Full executable/browser/kind evidence and cleanup gate
+        working-directory: bootleg-cli
+        run: python3 scripts/ci-registration.py
+      - name: Upload only normalized registration report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: registration-report
+          path: bootleg-cli/ci-report.json
+          if-no-files-found: warn
+          retention-days: 14
