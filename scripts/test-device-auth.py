@@ -80,6 +80,7 @@ def main():
     if options.docker and os.uname().sysname not in ("Darwin", "Linux"):
         parser.error("--docker requires Linux or macOS Docker Desktop")
     assert shutil.which("fzf"), "install fzf"
+    run("cargo", "nextest", "--version")  # supplemental real-store suite requires it
     run("cargo", "build", "--locked", cwd=ROOT)
     run("cargo", "build", "--locked", "-p", "bootleg-web", cwd=WEB)
     run("cargo", "build", "--locked", cwd=SMUGGLER)

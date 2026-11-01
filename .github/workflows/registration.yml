@@ -54,6 +54,7 @@ jobs:
           path: bootleg-smuggler
           persist-credentials: false
       - run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - run: cargo install --locked cargo-nextest --version 0.9.114
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.11.1
@@ -76,6 +77,9 @@ jobs:
           for repo in bootleg-cli bootleg-web bootleg-smuggler; do
             (cd "$repo" && cargo build --locked)
           done
+          # Compile supplemental store-test tooling before the bounded scenario run.
+          (cd bootleg-web && cargo build --locked -p bootleg-infrastructure --example test_database)
+          (cd bootleg-web && cargo nextest list --locked --workspace --all-targets > /dev/null)
       - name: Inject failure with stores, browser, agents and kind provisioned; verify cleanup
         working-directory: bootleg-cli
         run: python3 scripts/ci-registration.py --expect-failure-after-kind
