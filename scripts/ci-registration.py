@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run full acceptance privately; publish only normalized, allowlisted evidence."""
+import argparse
 import json
 import os
 from pathlib import Path
@@ -39,8 +40,23 @@ def summarize(report):
                 revisions=revisions, tracked_edits=edits)
 
 
+def resources_removed(prefix):
+    if not re.fullmatch(r"bootleg-acceptance-[0-9a-f]{12}", prefix):
+        raise ValueError("invalid resource owner")
+    for command in (["docker", "ps", "-a", "--format", "{{.Names}}"],
+                    ["docker", "network", "ls", "--format", "{{.Name}}"],
+                    ["docker", "image", "ls", "--format", "{{.Repository}}"]):
+        names = subprocess.check_output(command, text=True).splitlines()
+        if any(name == prefix or name.startswith(prefix + "-") for name in names):
+            return False
+    return True
+
+
 def main():
-    destination = ROOT / "ci-report.json"
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expect-failure-after-kind", action="store_true")
+    options = parser.parse_args()
+    destination = ROOT / ("ci-cleanup-report.json" if options.expect_failure_after_kind else "ci-report.json")
     destination.unlink(missing_ok=True)
     # Reject stale reports rather than accidentally publishing an earlier success.
     reports = ROOT / ".pi/acceptance"
@@ -50,9 +66,12 @@ def main():
         if subprocess.check_output(["git", "status", "--porcelain", "--untracked-files=no"], cwd=repo):
             raise SystemExit("CI requires clean tracked files")
     # Raw stdout/stderr may contain credentials on failures. Never stream or upload it.
-    with tempfile.TemporaryFile() as log:
-        child = subprocess.Popen(["python3", "scripts/test-device-auth.py", "--kind"],
-                                 cwd=ROOT, stdout=log, stderr=log)
+    with tempfile.TemporaryDirectory(prefix="bootleg-ci-private-") as scratch, tempfile.TemporaryFile() as log:
+        command = ["python3", "scripts/test-device-auth.py", "--kind"]
+        if options.expect_failure_after_kind:
+            command.append("--fail-after-kind")
+        child = subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=log,
+                                 env=dict(os.environ, TMPDIR=scratch))
         def forward(signum, _frame):
             if child.poll() is None:
                 child.send_signal(signum)
@@ -62,13 +81,34 @@ def main():
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
+        private_files_removed = not any(Path(scratch).iterdir())
     created = set(reports.glob("*/report.json")) - before
     if len(created) != 1:
         raise SystemExit("Acceptance failed before producing one sanitized report")
-    summary = summarize(json.loads(created.pop().read_text()))
+    report_path = created.pop()
+    report = json.loads(report_path.read_text())
+    summary = summarize(report)
+    summary["failure_locations"] = [
+        dict(script=frame["script"], line=frame["line"])
+        for frame in report.get("failure_locations", [])
+        if frame.get("script") in {"test-device-auth.py", "acceptance_kind.py", "acceptance_network.py"}
+        and type(frame.get("line")) is int and 0 < frame["line"] < 10000]
+    cleanup_verified = (private_files_removed and resources_removed(report_path.parent.name)
+                        and summary["cleanup"] == "completed")
+    summary["cleanup_verified"] = cleanup_verified
+    summary["registration_complete"] &= cleanup_verified
+    expected_failure = (options.expect_failure_after_kind and returncode != 0
+                        and report["failure_type"] == "InjectedAcceptanceFailure"
+                        and summary["scenarios"].get("kind") == "passed"
+                        and not any(summary["tracked_edits"].values()) and cleanup_verified)
+    if options.expect_failure_after_kind:
+        summary["injected_failure_cleanup_passed"] = expected_failure
     destination.write_text(json.dumps(summary, indent=2) + "\n")
     os.chmod(destination, 0o600)
-    if returncode or not summary["registration_complete"]:
+    if expected_failure:
+        print("Injected post-kind failure cleaned owned resources and private files")
+        return
+    if returncode or not summary["registration_complete"] or options.expect_failure_after_kind:
         raise SystemExit("Full registration incomplete; consult sanitized report only")
     print("Full registration passed; cleanup completed")
 

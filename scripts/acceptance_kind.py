@@ -30,9 +30,12 @@ class KindAcceptance:
         self.kubeconfig.chmod(0o600)
         self.run("kind", "load", "docker-image", "--name", self.name, image)
         # Docker Desktop resolves this name at the node boundary, not necessarily in CoreDNS.
-        address = self.run("docker", "exec", self.name + "-control-plane", "getent",
-                           "ahostsv4", "host.docker.internal").split()[0]
-        ipaddress.IPv4Address(address)
+        aliases = []
+        if "host.docker.internal" in origin:
+            address = self.run("docker", "exec", self.name + "-control-plane", "getent",
+                               "ahostsv4", "host.docker.internal").split()[0]
+            ipaddress.IPv4Address(address)
+            aliases = [dict(ip=address, hostnames=["host.docker.internal"])]
         self.kubectl("create", "namespace", "acceptance")
         self.kubectl("-n", "acceptance", "create", "secret", "generic", "bootleg-project",
                      "--from-file=token=" + str(token_file))
@@ -42,7 +45,7 @@ class KindAcceptance:
             environment = [dict(name=key, valueFrom={"fieldRef": {"fieldPath": value}})
                            for key, value in fields.items()]
             environment += [dict(name=key, value=value) for key, value in {
-                "BOOTLEG_API_URL": origin.replace("127.0.0.1", "host.docker.internal"),
+                "BOOTLEG_API_URL": origin,
                 "BOOTLEG_PROJECT_ID": project_id, "BOOTLEG_ALLOW_INSECURE": "true",
                 "BOOTLEG_CONTAINER_NAME": name, "BOOTLEG_CLUSTER_NAME": self.name,
             }.items()]
@@ -54,7 +57,7 @@ class KindAcceptance:
                               replicas=2, selector=dict(matchLabels=dict(app="smuggler")),
                               template=dict(metadata=dict(labels=dict(app="smuggler")), spec=dict(
                                   automountServiceAccountToken=False, terminationGracePeriodSeconds=15,
-                                  hostAliases=[dict(ip=address, hostnames=["host.docker.internal"])],
+                                  hostAliases=aliases,
                                   containers=containers))))
         self.kubectl("create", "-f", "-", input=json.dumps(deployment))
         self.kubectl("-n", "acceptance", "rollout", "status", "deployment/smuggler", "--timeout=180s")

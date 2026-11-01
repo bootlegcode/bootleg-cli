@@ -10,52 +10,85 @@ concurrency:
   cancel-in-progress: false
 jobs:
   registration:
-    # Never run PR code on a privileged Docker Desktop runner.
-    if: vars.REGISTRATION_RUNNER_ENABLED == 'true' && github.ref == 'refs/heads/main'
-    environment: registration-acceptance
-    runs-on: [self-hosted, macOS, bootleg-registration-ephemeral]
+    # Manual/default-branch schedule only; never execute PR code with sibling credentials.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           path: bootleg-cli
           persist-credentials: false
-      - name: Fetch only exact sibling commits from the committed manifest
+      - name: Read exact sibling revisions
+        id: pins
         working-directory: bootleg-cli
         run: |
           python3 - <<'PY'
-          import json, pathlib, re, subprocess
+          import json, os, pathlib, re
           pins = json.loads(pathlib.Path('scripts/acceptance-revisions.json').read_text())
           assert set(pins) == {'bootleg-core', 'bootleg-web', 'bootleg-smuggler'}
-          for name, sha in pins.items():
-              assert re.fullmatch('[0-9a-f]{40}', sha)
-              path = pathlib.Path('..') / name
-              path.mkdir()  # stale sibling checkout is a hard error
-              subprocess.run(['git', 'init', str(path)], check=True)
-              subprocess.run(['git', '-C', str(path), 'fetch', '--depth=1',
-                              f'https://github.com/bootlegcode/{name}.git', sha], check=True)
-              subprocess.run(['git', '-C', str(path), 'checkout', '--detach', sha], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for name, sha in pins.items():
+                  assert re.fullmatch('[0-9a-f]{40}', sha)
+                  print(f'{name}={sha}', file=output)
           PY
-      - name: Verify provisioned runner prerequisites
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: bootlegcode/bootleg-core
+          ref: ${{ steps.pins.outputs.bootleg-core }}
+          token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
+          path: bootleg-core
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: bootlegcode/bootleg-web
+          ref: ${{ steps.pins.outputs.bootleg-web }}
+          token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
+          path: bootleg-web
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: bootlegcode/bootleg-smuggler
+          ref: ${{ steps.pins.outputs.bootleg-smuggler }}
+          token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
+          path: bootleg-smuggler
+          persist-credentials: false
+      - run: rustup toolchain install 1.98.1 --profile minimal && rustup default 1.98.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.11.1
+      - name: Provision Linux tools
         run: |
-          test "$(uname -s)" = Darwin
-          test "$(rustc --version | awk '{print $2}')" = 1.98.1
-          kind version | grep -F v0.33.0
-          cargo nextest --version
+          sudo apt-get update -qq
+          sudo apt-get install -y fzf
+          curl --fail --location --silent --show-error -o kind https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          curl --fail --location --silent --show-error -o kind.sha256 https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum
+          echo "$(awk '{print $1}' kind.sha256)  kind" | sha256sum --check
+          chmod +x kind
+          sudo mv kind /usr/local/bin/kind
+          kind version
           kubectl version --client
-          fzf --version
           docker info >/dev/null
-          docker compose version
       - working-directory: bootleg-web
-        run: npm ci && npx --no-install playwright install chromium
+        run: npm ci && npx --no-install playwright install --with-deps chromium
+      - name: Build actual executables from clean pinned sources
+        run: |
+          for repo in bootleg-cli bootleg-web bootleg-smuggler; do
+            (cd "$repo" && cargo build --locked)
+          done
+      - name: Inject failure with stores, browser, agents and kind provisioned; verify cleanup
+        working-directory: bootleg-cli
+        run: python3 scripts/ci-registration.py --expect-failure-after-kind
       - name: Full executable/browser/kind evidence and cleanup gate
         working-directory: bootleg-cli
         run: python3 scripts/ci-registration.py
-      - name: Upload only normalized registration report
+      - name: Upload only normalized registration reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: registration-report
-          path: bootleg-cli/ci-report.json
+          name: registration-reports
+          path: |
+            bootleg-cli/ci-report.json
+            bootleg-cli/ci-cleanup-report.json
           if-no-files-found: warn
           retention-days: 14

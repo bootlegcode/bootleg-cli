@@ -23,6 +23,7 @@ import socket
 import subprocess
 import tempfile
 import time
+import traceback
 import urllib.parse
 import urllib.request
 
@@ -45,9 +46,14 @@ def free_port():
         return sock.getsockname()[1]
 
 
+class InjectedAcceptanceFailure(RuntimeError):
+    """Deliberate failure after all resource classes have been provisioned."""
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--docker", action="store_true", help="exercise Docker Desktop agent network lifecycle (macOS)")
+    parser.add_argument("--docker", action="store_true", help="exercise isolated Docker networking (Linux or macOS Docker Desktop)")
+    parser.add_argument("--fail-after-kind", action="store_true", help="inject failure after kind discovery to verify cleanup")
     parser.add_argument("--kind", action="store_true", help="also create an isolated kind cluster (implies --docker)")
     parser.add_argument("--allow-dirty-dependencies", action="store_true", help="explicitly test tracked edits at the pinned sibling revisions")
     parser.add_argument("--presence-load", metavar="AGENTS,VIEWERS,REPLICAS,SECONDS",
@@ -69,8 +75,10 @@ def main():
     if options.kind:
         options.docker = True
         assert shutil.which("kind") and shutil.which("kubectl"), "install kind and kubectl"
-    if options.docker and os.uname().sysname != "Darwin":
-        parser.error("--docker currently requires macOS Docker Desktop host.docker.internal routing")
+    if options.fail_after_kind and not options.kind:
+        parser.error("--fail-after-kind requires --kind")
+    if options.docker and os.uname().sysname not in ("Darwin", "Linux"):
+        parser.error("--docker requires Linux or macOS Docker Desktop")
     assert shutil.which("fzf"), "install fzf"
     run("cargo", "build", "--locked", cwd=ROOT)
     run("cargo", "build", "--locked", "-p", "bootleg-web", cwd=WEB)
@@ -420,8 +428,28 @@ def main():
                 network_name = resource_prefix + "-network"
                 run("docker", "network", "create", network_name)
                 docker_network = network_name
+                agent_origin = origin.replace("127.0.0.1", "host.docker.internal")
+                if os.uname().sysname == "Linux":
+                    # Native web/stores remain loopback-only. Expose only web through
+                    # the owned bridge gateway, restricted to peers on that subnet.
+                    ipam = json.loads(run("docker", "network", "inspect", docker_network))[0]["IPAM"]["Config"][0]
+                    gateway, subnet = ipam["Gateway"], ipam["Subnet"]
+                    port = urllib.parse.urlsplit(origin).port
+                    relay = subprocess.Popen([sys.executable, str(ROOT / "scripts/acceptance_relay.py"),
+                                              gateway, subnet, str(port)], stdout=log, stderr=log)
+                    children.append(relay)
+                    for _ in range(100):
+                        assert relay.poll() is None, "bridge relay exited"
+                        try:
+                            with socket.create_connection((gateway, port), timeout=.2):
+                                break
+                        except OSError:
+                            time.sleep(.1)
+                    else:
+                        raise AssertionError("bridge relay unavailable")
+                    agent_origin = origin.replace("127.0.0.1", gateway)
                 docker_env = {key: value for key, value in agent_env.items() if key.startswith("BOOTLEG_")}
-                docker_env.update(BOOTLEG_API_URL=origin.replace("127.0.0.1", "host.docker.internal"),
+                docker_env.update(BOOTLEG_API_URL=agent_origin,
                                   BOOTLEG_INSTANCE_NAME="Docker <b>agent</b>")
                 args = ["docker", "run", "-d", "--name", resource_prefix + "-agent",
                         "--network", docker_network]
@@ -451,13 +479,13 @@ def main():
                 results["disabled_network"] = "passed: real Linux executable, strace network syscalls absent when disabled; enabled positive control observed"
                 print("PASS [Linux executable + strace]: disabled no-network syscalls, enabled positive control, application exit status")
             else:
-                results["docker_network_lifecycle"] = "skipped: requires --docker on macOS Docker Desktop"
+                results["docker_network_lifecycle"] = "skipped: requires --docker on Linux or macOS Docker Desktop"
                 results["disabled_network"] = "skipped: requires --docker and Linux syscall tracing"
-                print("SKIP: Docker network lifecycle (enable --docker on macOS Docker Desktop)")
+                print("SKIP: Docker network lifecycle (enable --docker on Linux or macOS Docker Desktop)")
             retained_count = 4 if options.docker else 3
             if options.kind:
                 kind_cluster = KindAcceptance(resource_prefix, home, docker_network)
-                pods = kind_cluster.start(docker_image, origin, project_id, token_file)
+                pods = kind_cluster.start(docker_image, agent_origin, project_id, token_file)
                 retained_count += 4
                 snapshots = wait_instances(lambda xs: len(xs) == retained_count and
                                            sum(x["presence"] == "connected" for x in xs) == retained_count - 1, 65)
@@ -472,6 +500,8 @@ def main():
                 browser_check("rows", count=retained_count, connected=retained_count - 1)
                 results["kind"] = "passed: isolated real kind cluster, two pods with app/worker agents each, CLI and Chromium discovery"
                 print("PASS [kind + CLI + Chromium]: two replicas, distinct instrumented containers per pod")
+                if options.fail_after_kind:
+                    raise InjectedAcceptanceFailure("requested post-kind cleanup validation")
             else:
                 results["kind"] = "skipped: requires --kind, kind and kubectl"
             rotated = home / "rotated-token"
@@ -598,6 +628,9 @@ def main():
                               value.startswith("passed:") for value in results.values()),
                           failure_type=failure.__name__ if failure else None,
                           cleanup="failed" if cleanup_failed else "completed",
+                          failure_locations=[dict(script=Path(frame.filename).name, line=frame.lineno)
+                                             for frame in traceback.extract_tb(sys.exc_info()[2])
+                                             if Path(frame.filename).parent == ROOT / "scripts"],
                           revisions={repo.name: run("git", "rev-parse", "HEAD", cwd=repo)
                                      for repo in (ROOT, WEB, SMUGGLER, ROOT.parent / "bootleg-core")},
                           tracked_edits={repo.name: bool(run("git", "status", "--porcelain", "--untracked-files=no", cwd=repo))
