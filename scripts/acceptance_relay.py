@@ -12,7 +12,8 @@ import sys
 async def serve(gateway, subnet, port):
     network = ipaddress.IPv4Network(subnet)
     address = ipaddress.IPv4Address(gateway)
-    if not address.is_private or address.is_loopback or address not in network:
+    if (not address.is_private or address.is_loopback or address.is_unspecified
+            or address.is_multicast or address.is_reserved or address not in network):
         raise ValueError("relay requires an owned private bridge address")
 
     async def connection(reader, writer):

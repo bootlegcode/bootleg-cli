@@ -72,9 +72,11 @@ Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
 recorded in the report. Untracked handoff documents are preserved, not removed.
 
 Prerequisites: Rust/Cargo, **cargo-nextest**, Docker daemon, Python 3 (standard library
-only), Node, fzf, and Unix PTYs. Full Docker/kind acceptance currently supports
-**macOS Docker Desktop** with `host.docker.internal`; unsupported hosts fail the
-explicit request rather than being counted as passing. Install `kind`, `kubectl`,
+only), Node, fzf, and Unix PTYs. Full Docker/kind acceptance has historical evidence
+on **macOS Docker Desktop** with `host.docker.internal`. A Linux owned-bridge relay
+path is now implemented for GitHub-hosted CI but awaits end-to-end validation;
+see [CI operations and current blockers](ci.md). Other hosts fail explicit Docker
+requests rather than being counted as passing. Install `kind`, `kubectl`,
 and web's locked Node dependencies plus Chromium:
 
 ```sh
