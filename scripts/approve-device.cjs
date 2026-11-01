@@ -14,6 +14,11 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     await context.addCookies(input.cookies.map(c => ({ ...c, url: input.origin })));
     const page = await context.newPage();
     await page.goto(input.origin + input.path);
+    // Exercise parent timeout with a real browser/context holding private cookies.
+    if (input.stall) {
+      fs.writeFileSync(input.stallMarker, 'browser-ready', { mode: 0o600 });
+      await page.waitForTimeout(120000);
+    }
     await page.locator('input[name="name"]').fill(input.name);
     await page.locator(`button[name="decision"][value="${input.decision}"]`).click();
     await page.waitForLoadState('networkidle');

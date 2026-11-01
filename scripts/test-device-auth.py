@@ -40,6 +40,12 @@ def run(*args, **kwargs):
     return subprocess.check_output(args, text=True, **kwargs).strip()
 
 
+def spawn(*args, **kwargs):
+    # Own the complete tree, including Chromium descendants on browser timeout.
+    kwargs.setdefault("start_new_session", True)
+    return subprocess.Popen(*args, **kwargs)
+
+
 def free_port():
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -54,6 +60,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docker", action="store_true", help="exercise isolated Docker networking (Linux or macOS Docker Desktop)")
     parser.add_argument("--fail-after-kind", action="store_true", help="inject failure after kind discovery to verify cleanup")
+    parser.add_argument("--mutation-failures", action="store_true", help="run committed-response-loss scenarios only")
+    parser.add_argument("--fail-at", choices=("startup", "browser-timeout", "sigint", "sigterm", "docker-partial", "kind-partial"))
     parser.add_argument("--kind", action="store_true", help="also create an isolated kind cluster (implies --docker)")
     parser.add_argument("--allow-dirty-dependencies", action="store_true", help="explicitly test tracked edits at the pinned sibling revisions")
     parser.add_argument("--presence-load", metavar="AGENTS,VIEWERS,REPLICAS,SECONDS",
@@ -75,6 +83,10 @@ def main():
     if options.kind:
         options.docker = True
         assert shutil.which("kind") and shutil.which("kubectl"), "install kind and kubectl"
+    if options.fail_at == "kind-partial" and not options.kind:
+        parser.error("--fail-at kind-partial requires --kind")
+    if options.fail_at == "docker-partial" and not options.docker:
+        parser.error("--fail-at docker-partial requires --docker")
     if options.fail_after_kind and not options.kind:
         parser.error("--fail-after-kind requires --kind")
     if options.docker and os.uname().sysname not in ("Darwin", "Linux"):
@@ -95,11 +107,16 @@ def main():
         "expiry_logout_denial")}
     results.update({name: "skipped: not implemented" for name in (
         "kind", "cross_org_isolation", "stale_session_callbacks", "disabled_network", "hidden_tabs")})
+    if options.mutation_failures:
+        results.update({name: "skipped: not reached" for name in (
+            "ambiguous_creation", "ambiguous_rotation", "ambiguous_device_exchange")})
     containers = []
     children = []
     docker_image = docker_network = trace_image = None
     kind_cluster = None
     browser_failure_stage = None
+    mutation_proxy = None
+    injection_reached = False
     with tempfile.TemporaryDirectory(prefix="bootleg-cli-e2e-") as directory:
         home = Path(directory)
         env = {k: v for k, v in os.environ.items() if not k.startswith(
@@ -107,8 +124,9 @@ def main():
         env.update(HOME=directory, TERM="xterm-256color")
         try:
             def container(image, port, *args):
-                cid = run("docker", "run", "--name", f"{resource_prefix}-{len(containers)}", "--rm", "-d", "-p", f"127.0.0.1::{port}", *args, image)
-                containers.append(cid)
+                name = f"{resource_prefix}-{len(containers)}"
+                containers.append(name)  # Record intent before Docker can create anything.
+                cid = run("docker", "run", "--name", name, "--rm", "-d", "-p", f"127.0.0.1::{port}", *args, image)
                 address = run("docker", "port", cid, str(port)).splitlines()[0]
                 return cid, address.rsplit(":", 1)[1]
 
@@ -122,10 +140,16 @@ def main():
                     break
                 time.sleep(.2)
             origin = f"http://127.0.0.1:{free_port()}"
+            bind_address = origin.removeprefix("http://")
+            if options.mutation_failures:
+                from acceptance_mutations import CommitDropProxy
+                mutation_proxy = CommitDropProxy(origin)
+                mutation_proxy.__enter__()
+                origin = mutation_proxy.origin
             env.update(PGHOST="127.0.0.1", PGPORT=pgport, PGUSER="postgres",
                        PGPASSWORD="isolated-test", PGDATABASE="cli_test", PGSSLMODE="disable",
                        VALKEY_URL=f"redis://127.0.0.1:{redisport}/0",
-                       BIND_ADDR=origin.removeprefix("http://"), BOOTLEG_PUBLIC_BASE_URL=origin,
+                       BIND_ADDR=bind_address, BOOTLEG_PUBLIC_BASE_URL=origin,
                        BOOTLEG_INSECURE_COOKIES="true", BOOTLEG_EMAIL_LOCAL_MODE="true",
                        BOOTLEG_EMAIL_ALLOW_LOCAL_HTTP="true", BOOTLEG_EMAIL_PROVIDER="smtp",
                        BOOTLEG_EMAIL_SMTP_SECURITY="local_plaintext", BOOTLEG_EMAIL_SMTP_HOST="127.0.0.1",
@@ -133,8 +157,11 @@ def main():
                        BOOTLEG_EMAIL_VERIFICATION_SIGNING_KEY=base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("="))
             run(str(WEB / "target/debug/bootleg-web"), "migrate", cwd=WEB, env=env)
             log = open(home / "web.log", "w+")
-            app = subprocess.Popen([str(WEB / "target/debug/bootleg-web"), "serve"],
-                                   cwd=WEB, env=env, stdout=log, stderr=log)
+            startup_env = dict(env)
+            if options.fail_at == "startup":
+                startup_env["BIND_ADDR"] = "invalid bind address"
+            app = spawn([str(WEB / "target/debug/bootleg-web"), "serve"],
+                        cwd=WEB, env=startup_env, stdout=log, stderr=log)
             children.append(app)
             for _ in range(100):
                 try:
@@ -142,6 +169,7 @@ def main():
                     break
                 except OSError:
                     if app.poll() is not None:
+                        injection_reached = options.fail_at == "startup"
                         log.seek(0)
                         raise AssertionError("web startup failed: " + log.read())
                     time.sleep(.2)
@@ -149,12 +177,15 @@ def main():
             browser = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
 
             def browser_decision(path, name, decision="approve", jar=None):
-                approval = subprocess.Popen(["node", str(ROOT / "scripts/approve-device.cjs")],
+                approval = spawn(["node", str(ROOT / "scripts/approve-device.cjs")],
                                             stdin=subprocess.PIPE, stdout=log, stderr=log, text=True)
                 children.append(approval)
                 approval.communicate(json.dumps(dict(origin=origin, path=path, name=name,
                     decision=decision, cookies=[dict(name=c.name, value=c.value)
-                                                for c in (cookies if jar is None else jar)])), timeout=40)
+                                                for c in (cookies if jar is None else jar)],
+                    stall=options.fail_at == "browser-timeout",
+                    stallMarker=str(home / "browser-stalled"))),
+                    timeout=10 if options.fail_at == "browser-timeout" else 40)
                 assert approval.returncode == 0, "Chromium device decision failed"
 
             def page(path, fields=None, opener=None):
@@ -187,7 +218,7 @@ def main():
                 return json.loads(result.stdout)
 
             def start_login(*args, settings=None, directory=None):
-                proc = subprocess.Popen(base + list(args), cwd=directory or home, env=settings or env,
+                proc = spawn(base + list(args), cwd=directory or home, env=settings or env,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 children.append(proc)
                 deadline = time.monotonic() + 30
@@ -229,6 +260,15 @@ def main():
             assert token_file.stat().st_mode & 0o777 == 0o600
             projects = cli("projects", "list", "--org-id", org)
             assert len(projects) == 1
+
+            if options.fail_at in ("sigint", "sigterm"):
+                injection_reached = True
+                os.kill(os.getpid(), signal.SIGINT if options.fail_at == "sigint" else signal.SIGTERM)
+            if options.mutation_failures:
+                from acceptance_mutations import exercise
+                exercise(origin, base, env, home, token, org, projects[0]["project_id"],
+                         pg, cli, start_login, browser_decision, results, mutation_proxy)
+                return
 
             if load_config:
                 from presence_load import measure
@@ -274,7 +314,7 @@ def main():
             def configure(approve=False, cancel=False, multiple=False):
                 master, slave = pty.openpty()
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 120, 0, 0))
-                proc = subprocess.Popen(base + ["config"], cwd=home, env=env, stdin=slave, stderr=slave,
+                proc = spawn(base + ["config"], cwd=home, env=env, stdin=slave, stderr=slave,
                                         stdout=subprocess.PIPE, start_new_session=True)
                 children.append(proc)
                 os.close(slave)
@@ -328,7 +368,7 @@ def main():
             configure(cancel=True)
             assert (home / ".bootleg.json").read_bytes() == saved
             results["interactive_config"] = "passed: actual CLI and fzf PTY"
-            presence_browser = subprocess.Popen(["node", str(ROOT / "scripts/presence-browser.cjs")],
+            presence_browser = spawn(["node", str(ROOT / "scripts/presence-browser.cjs")],
                                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                                 stderr=log, text=True)
             children.append(presence_browser)
@@ -362,7 +402,7 @@ def main():
                 if dirty is not None:
                     settings.update(BOOTLEG_BUILD_COMMIT="a" * 40, BOOTLEG_BUILD_DIRTY="true")
                 marker = home / f"application-{len(children)}.tick"
-                proc = subprocess.Popen([str(SMUGGLER / "target/debug/smuggler"),
+                proc = spawn([str(SMUGGLER / "target/debug/smuggler"),
                                          "--name", "duplicate <img src=x onerror=alert(1)>", "--", "/bin/sh", "-c",
                                          'while :; do date +%s > "$1"; sleep 1; done', "application", str(marker)],
                                         env=settings, cwd=home, stdout=log, stderr=log)
@@ -405,7 +445,7 @@ def main():
             browser_check("stale", count=2)
             application_advances(first)
             application_advances(second)
-            app = subprocess.Popen([str(WEB / "target/debug/bootleg-web"), "serve"],
+            app = spawn([str(WEB / "target/debug/bootleg-web"), "serve"],
                                    cwd=WEB, env=env, stdout=log, stderr=log)
             children.append(app)
             browser_check("live")
@@ -433,9 +473,11 @@ def main():
                 docker_image = resource_prefix + ":agent"
                 run("docker", "build", "-q", "-t", docker_image, "-f",
                     str(context / "bootleg-smuggler/Dockerfile"), str(context))
-                network_name = resource_prefix + "-network"
-                run("docker", "network", "create", network_name)
-                docker_network = network_name
+                docker_network = resource_prefix + "-network"
+                run("docker", "network", "create", docker_network)
+                if options.fail_at == "docker-partial":
+                    injection_reached = True
+                    raise InjectedAcceptanceFailure("partial Docker provisioning")
                 agent_origin = origin.replace("127.0.0.1", "host.docker.internal")
                 if os.uname().sysname == "Linux":
                     # Native web/stores remain loopback-only. Expose only web through
@@ -443,7 +485,7 @@ def main():
                     ipam = json.loads(run("docker", "network", "inspect", docker_network))[0]["IPAM"]["Config"][0]
                     gateway, subnet = ipam["Gateway"], ipam["Subnet"]
                     port = urllib.parse.urlsplit(origin).port
-                    relay = subprocess.Popen([sys.executable, str(ROOT / "scripts/acceptance_relay.py"),
+                    relay = spawn([sys.executable, str(ROOT / "scripts/acceptance_relay.py"),
                                               gateway, subnet, str(port)], stdout=log, stderr=log)
                     children.append(relay)
                     for _ in range(100):
@@ -463,8 +505,8 @@ def main():
                         "--network", docker_network]
                 for key in docker_env:
                     args.extend(("-e", key))
+                containers.append(resource_prefix + "-agent")
                 docker_agent = run(*args, docker_image, env=dict(os.environ, **docker_env))
-                containers.append(docker_agent)
                 docker_items = wait_instances(lambda xs: len(xs) == 4 and sum(x["presence"] == "connected" for x in xs) == 3)
                 before = next(x for x in docker_items if x["display_name"] == "Docker <b>agent</b>")
                 browser_check("rows", count=4, connected=3, label="Docker <b>agent</b>")
@@ -493,7 +535,8 @@ def main():
             retained_count = 4 if options.docker else 3
             if options.kind:
                 kind_cluster = KindAcceptance(resource_prefix, home, docker_network)
-                pods = kind_cluster.start(docker_image, agent_origin, project_id, token_file)
+                pods = kind_cluster.start(docker_image, agent_origin, project_id, token_file,
+                                          fail_after_secret=options.fail_at == "kind-partial")
                 retained_count += 4
                 snapshots = wait_instances(lambda xs: len(xs) == retained_count and
                                            sum(x["presence"] == "connected" for x in xs) == retained_count - 1, 65)
@@ -609,19 +652,38 @@ def main():
         finally:
             failure = sys.exc_info()[0]
             disk_free_bytes = shutil.disk_usage(ROOT).free
-            for child in children:
-                if child.poll() is None:
-                    child.terminate()
-                    try:
-                        child.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        child.kill()
-                        child.wait()
             cleanup_failed = False
+            if mutation_proxy:
+                mutation_proxy.__exit__(None, None, None)
+            for child in children:
+                # A node parent can exit while Chromium descendants retain private
+                # files. Terminate the owned group even if its leader has exited.
+                try:
+                    os.killpg(child.pid, signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    if child.poll() is None:
+                        child.terminate()
+                try:
+                    child.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        child.kill()
+                    child.wait(timeout=5)
+                try:
+                    os.killpg(child.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            groups = {int(value) for value in run("ps", "-axo", "pgid=").split()}
+            processes_removed = all(child.poll() is not None and child.pid not in groups for child in children)
             for cid in containers:
-                result = subprocess.run(["docker", "rm", "-f", "-v", cid],
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                cleanup_failed |= result.returncode != 0
+                # Failed provisioning may not have created the intended name.
+                existing = run("docker", "ps", "-a", "--no-trunc", "--format", "{{.ID}} {{.Names}}")
+                if any(cid in line.split() for line in existing.splitlines()):
+                    result = subprocess.run(["docker", "rm", "-f", "-v", cid],
+                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    cleanup_failed |= result.returncode != 0
             if kind_cluster:
                 cleanup_failed |= not kind_cluster.cleanup()
             if docker_network:
@@ -632,10 +694,21 @@ def main():
                     cleanup_failed |= subprocess.run(["docker", "image", "rm", image],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
             log.close() if "log" in locals() else None
+            if options.fail_at == "browser-timeout":
+                injection_reached = (home / "browser-stalled").exists()
+            if options.fail_at == "kind-partial":
+                injection_reached = bool(kind_cluster and kind_cluster.failure_category == "injected_after_secret")
+            shutil.rmtree(home)
+            private_files_removed = not home.exists()
+            cleanup_failed |= not processes_removed or not private_files_removed
             # Allowlisted diagnostic report: never persist raw exceptions, logs, cookies or DTOs.
             report = dict(scenarios=results, registration_complete=not failure and not cleanup_failed and all(
                               value.startswith("passed:") for value in results.values()),
                           failure_type=failure.__name__ if failure else None,
+                          failure_injection=options.fail_at,
+                          injection_reached=injection_reached,
+                          private_files_removed=private_files_removed,
+                          processes_removed=processes_removed,
                           disk_free_bytes=disk_free_bytes,
                           kind_failure=kind_cluster.failure_category if kind_cluster else None,
                           browser_failure_stage=browser_failure_stage,

@@ -43,7 +43,7 @@ class KindAcceptance:
         return self.run("kubectl", "--kubeconfig", str(self.kubeconfig),
                         "--context", "kind-" + self.name, *args, **kwargs)
 
-    def start(self, image, origin, project_id, token_file):
+    def start(self, image, origin, project_id, token_file, fail_after_secret=False):
         self.run("kind", "create", "cluster", "--name", self.name, "--image", NODE_IMAGE,
                  "--kubeconfig", str(self.kubeconfig), "--wait", "180s")
         self.kubeconfig.chmod(0o600)
@@ -58,6 +58,9 @@ class KindAcceptance:
         self.kubectl("create", "namespace", "acceptance")
         self.kubectl("-n", "acceptance", "create", "secret", "generic", "bootleg-project",
                      "--from-file=token=" + str(token_file))
+        if fail_after_secret:
+            self.failure_category = "injected_after_secret"
+            raise RuntimeError("injected partial kind provisioning failure")
         containers = []
         for name in ("app", "worker"):
             fields = {"POD_NAME": "metadata.name", "POD_UID": "metadata.uid", "POD_NAMESPACE": "metadata.namespace"}
