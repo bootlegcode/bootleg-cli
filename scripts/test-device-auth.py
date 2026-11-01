@@ -98,6 +98,7 @@ def main():
     children = []
     docker_image = docker_network = trace_image = None
     kind_cluster = None
+    browser_failure_stage = None
     with tempfile.TemporaryDirectory(prefix="bootleg-cli-e2e-") as directory:
         home = Path(directory)
         env = {k: v for k, v in os.environ.items() if not k.startswith(
@@ -332,11 +333,17 @@ def main():
             children.append(presence_browser)
 
             def browser_check(action, **fields):
+                nonlocal browser_failure_stage
                 presence_browser.stdin.write(json.dumps(dict(action=action, **fields)) + "\n")
                 presence_browser.stdin.flush()
                 assert select.select([presence_browser.stdout], [], [], 40)[0], "browser response deadline"
                 response = presence_browser.stdout.readline()
-                assert response and json.loads(response).get("ok"), "browser presence check failed: " + action
+                response = json.loads(response) if response else {}
+                if not response.get("ok"):
+                    stage = response.get("stage")
+                    if stage in ("command", "chromium_start", "cdp_connect", "page_navigation", "initial_live"):
+                        browser_failure_stage = stage
+                assert response.get("ok"), "browser presence check failed: " + action
 
             browser_check("open", origin=origin, profile=str(home / "presence-chromium"),
                           path=f"/app/projects/{org}/{projects[0]['project_id']}",
@@ -627,6 +634,7 @@ def main():
             report = dict(scenarios=results, registration_complete=not failure and not cleanup_failed and all(
                               value.startswith("passed:") for value in results.values()),
                           failure_type=failure.__name__ if failure else None,
+                          browser_failure_stage=browser_failure_stage,
                           cleanup="failed" if cleanup_failed else "completed",
                           failure_locations=[dict(script=Path(frame.filename).name, line=frame.lineno)
                                              for frame in traceback.extract_tb(sys.exc_info()[2])

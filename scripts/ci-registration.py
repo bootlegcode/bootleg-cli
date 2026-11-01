@@ -88,6 +88,8 @@ def main():
     report_path = created.pop()
     report = json.loads(report_path.read_text())
     summary = summarize(report)
+    if report.get("browser_failure_stage") in ("command", "chromium_start", "cdp_connect", "page_navigation", "initial_live"):
+        summary["browser_failure_stage"] = report["browser_failure_stage"]
     summary["failure_locations"] = [
         dict(script=frame["script"], line=frame["line"])
         for frame in report.get("failure_locations", [])

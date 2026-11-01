@@ -5,6 +5,7 @@ const { spawn } = require('node:child_process');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_modules/playwright'));
+let failureStage = 'command';
 (async () => {
   let browser, chrome, context, page, cover, closing;
   let streamStarts = 0;
@@ -36,7 +37,12 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
       if (command.action === 'open') {
         // Playwright's usual focus emulation keeps background pages visible. Connect to
         // our own full Chromium with noDefaults so tab visibility is native, not mocked.
-        chrome = spawn(chromium.executablePath(), ['--headless=new', '--remote-debugging-port=0',
+        failureStage = 'chromium_start';
+        // Ubuntu hosted runners restrict unprivileged user namespaces. Match
+        // Playwright's default sandbox policy, but only on disposable GHA Linux.
+        const ciFlags = process.platform === 'linux' && process.env.GITHUB_ACTIONS === 'true'
+          ? ['--no-sandbox'] : [];
+        chrome = spawn(chromium.executablePath(), [...ciFlags, '--headless=new', '--remote-debugging-port=0',
           '--user-data-dir=' + command.profile, '--no-first-run', '--no-default-browser-check'],
           { stdio: ['ignore', 'ignore', 'pipe'] });
         const endpoint = await new Promise((resolve, reject) => {
@@ -50,6 +56,7 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
           chrome.once('error', () => { clearTimeout(timer); reject(new Error('Chromium launch failed')); });
           chrome.once('exit', () => { clearTimeout(timer); reject(new Error('Chromium exited')); });
         });
+        failureStage = 'cdp_connect';
         browser = await chromium.connectOverCDP(endpoint, { noDefaults: true });
         context = browser.contexts()[0];
         await context.addCookies(command.cookies.map(c => ({ ...c, url: command.origin })));
@@ -62,7 +69,9 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
         network.on('Network.loadingFailed', event => streams.delete(event.requestId));
         network.on('Network.loadingFinished', event => streams.delete(event.requestId));
         await page.bringToFront();
+        failureStage = 'page_navigation';
         await page.goto(command.origin + command.path);
+        failureStage = 'initial_live';
         await page.waitForFunction(() => document.querySelector('[data-instances-status]')?.textContent.includes('live updates connected'));
       } else if (command.action === 'rows') {
         await page.waitForFunction(({ count, connected }) => {
@@ -104,6 +113,7 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
       } else {
         throw new Error('Unknown browser command');
       }
+      failureStage = 'command';
       console.log(JSON.stringify({ ok: true, action: command.action }));
     }
   } finally {
@@ -112,6 +122,6 @@ const { chromium } = require(path.resolve(__dirname, '../../bootleg-web/node_mod
   }
 })().catch(() => {
   // Never echo command payload, cookies, page HTML or Playwright error traces.
-  console.log(JSON.stringify({ ok: false, error: 'browser acceptance assertion failed' }));
+  console.log(JSON.stringify({ ok: false, error: 'browser acceptance assertion failed', stage: failureStage }));
   process.exitCode = 1;
 });
