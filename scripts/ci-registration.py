@@ -81,7 +81,11 @@ def main():
         finally:
             for sig, handler in previous.items():
                 signal.signal(sig, handler)
-        private_files_removed = not any(Path(scratch).iterdir())
+    # Chromium and toolchains may leave auxiliary scratch files outside the
+    # harness's private home. The wrapper owns this entire directory and removes
+    # it on both success and failure; verify the completed deletion, not whether
+    # third-party tools happened to leave it empty before teardown.
+    private_files_removed = not Path(scratch).exists()
     created = set(reports.glob("*/report.json")) - before
     if len(created) != 1:
         raise SystemExit("Acceptance failed before producing one sanitized report")
@@ -95,7 +99,10 @@ def main():
         for frame in report.get("failure_locations", [])
         if frame.get("script") in {"test-device-auth.py", "acceptance_kind.py", "acceptance_network.py"}
         and type(frame.get("line")) is int and 0 < frame["line"] < 10000]
-    cleanup_verified = (private_files_removed and resources_removed(report_path.parent.name)
+    docker_resources_removed = resources_removed(report_path.parent.name)
+    summary["private_files_removed"] = private_files_removed
+    summary["docker_resources_removed"] = docker_resources_removed
+    cleanup_verified = (private_files_removed and docker_resources_removed
                         and summary["cleanup"] == "completed")
     summary["cleanup_verified"] = cleanup_verified
     summary["registration_complete"] &= cleanup_verified
