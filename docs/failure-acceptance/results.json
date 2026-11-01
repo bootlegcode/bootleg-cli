@@ -1,0 +1,142 @@
+{
+  "mutations": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-dcb41ca83138",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "startup": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-fc53702f3faf",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "browser-timeout": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-65ee4825fbe8",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "sigint": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-631bb11741fc",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "sigterm": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-545e18d8d620",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "docker-partial": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-ba0bcb5f2c18",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  },
+  "kind-partial": {
+    "passed": true,
+    "owned_resources_removed": true,
+    "unrelated_resources_preserved": true,
+    "private_files_removed": true,
+    "processes_removed": true,
+    "source_report": "bootleg-acceptance-f31e795d24b3",
+    "revisions": {
+      "bootleg-cli": "34a4bf153589b31cb7ef29b234b7f45a16506957",
+      "bootleg-web": "d65f688bb81f2754e8f185935b8383b9911b738d",
+      "bootleg-smuggler": "201dd5b3c4c832120e3d774a04de1e0e376f7158",
+      "bootleg-core": "93f4fe78fbc542eed31a563f1e171595fb440285"
+    },
+    "tracked_edits": {
+      "bootleg-cli": false,
+      "bootleg-web": false,
+      "bootleg-smuggler": false,
+      "bootleg-core": false
+    }
+  }
+}

@@ -1,5 +1,22 @@
 # Registration acceptance checkpoint
 
+## Mutation ambiguity and failure-cleanup checkpoint
+
+At CLI `34a4bf1`, all seven failure-matrix cases passed on macOS Docker Desktop:
+committed response loss for creation/rotation/device exchange, startup failure,
+real Chromium timeout, SIGINT, SIGTERM, partial Docker provisioning and partial
+kind provisioning. The mutation case contains three independently asserted
+scenarios. Actual web/stores/CLI are used; responses are dropped after successful
+server completion, not mocked. Cleanup and preservation of unrelated resources
+are checked, including temporary credentials and browser process groups.
+
+Full `--kind` registration also passed with `registration_complete: true` and
+cleanup complete. All repositories had no tracked edits in these final runs.
+CLI tests: 76 passed / 4 explicitly ignored; CI report sanitizer tests: 5 passed.
+Commands, exact revisions, sanitized durable evidence and SIGKILL/recovery limits:
+[failure acceptance](failure-acceptance/README.md). The intermittent web nextest
+stdio diagnostic remains a separately documented triage result, not a claimed fix.
+
 ## GitHub Actions Linux checkpoint
 
 Full pinned registration and deliberate post-kind failure cleanup passed on a
