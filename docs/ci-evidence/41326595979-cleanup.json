@@ -1,0 +1,48 @@
+{
+  "registration_complete": false,
+  "scenarios": {
+    "chromium_login": "passed",
+    "interactive_config": "passed",
+    "native_discovery": "passed",
+    "browser_sse": "passed",
+    "control_plane_outage": "passed",
+    "restart_identity": "passed",
+    "docker_network_lifecycle": "passed",
+    "rotation": "skipped",
+    "deactivation": "skipped",
+    "browser_permission_loss": "skipped",
+    "multi_org_project_config": "skipped",
+    "expiry_logout_denial": "skipped",
+    "kind": "passed",
+    "cross_org_isolation": "passed",
+    "stale_session_callbacks": "skipped",
+    "disabled_network": "passed",
+    "hidden_tabs": "passed",
+    "diff_preview": "passed"
+  },
+  "cleanup": "completed",
+  "revisions": {
+    "bootleg-cli": "4f9737147aacaf90c916c90ad567bb1288ae9921",
+    "bootleg-web": "c4303c0989f542eb91d0ce8ba6b68631e8feec20",
+    "bootleg-smuggler": "0963d22013d5810288be5babf530ea08a32cb756",
+    "bootleg-core": "3f43c6be679febf98577fa8047d0669f8fc3e482"
+  },
+  "tracked_edits": {
+    "bootleg-cli": false,
+    "bootleg-web": false,
+    "bootleg-smuggler": false,
+    "bootleg-core": false
+  },
+  "disk_free_bytes_at_cleanup": 3113177088,
+  "failure_type": "InjectedAcceptanceFailure",
+  "failure_locations": [
+    {
+      "script": "test-device-auth.py",
+      "line": 512
+    }
+  ],
+  "private_files_removed": true,
+  "docker_resources_removed": true,
+  "cleanup_verified": true,
+  "injected_failure_cleanup_passed": true
+}

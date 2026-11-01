@@ -1,5 +1,18 @@
 # Registration acceptance checkpoint
 
+## GitHub Actions Linux checkpoint
+
+Full pinned registration and deliberate post-kind failure cleanup passed on a
+GitHub-hosted Ubuntu 24.04 runner at CLI `4f9737147aacaf90c916c90ad567bb1288ae9921`.
+[Run 41326595979](https://github.com/bootlegcode/bootleg-cli/actions/runs/41326595979)
+uses an owned-bridge relay, actual CLI/web/smuggler/Chromium, Docker and kind.
+All 18 scenarios passed with `registration_complete: true`; both success and
+injected-failure runs verified owned-resource/private-file cleanup. Exact pins,
+sanitized report allowlist, historical failures and operational prerequisites:
+[CI operations](ci.md). Durable [registration](ci-evidence/41326595979-registration.json)
+and [failure cleanup](ci-evidence/41326595979-cleanup.json) reports are separate
+from the historical local checkpoints below.
+
 ## Initial registration evidence
 
 Initial full registration acceptance used CLI `f29e2cc` and web `515974d`.
@@ -73,9 +86,9 @@ recorded in the report. Untracked handoff documents are preserved, not removed.
 
 Prerequisites: Rust/Cargo, **cargo-nextest**, Docker daemon, Python 3 (standard library
 only), Node, fzf, and Unix PTYs. Full Docker/kind acceptance has historical evidence
-on **macOS Docker Desktop** with `host.docker.internal`. A Linux owned-bridge relay
-path is now implemented for GitHub-hosted CI but awaits end-to-end validation;
-see [CI operations and current blockers](ci.md). Other hosts fail explicit Docker
+on **macOS Docker Desktop** with `host.docker.internal` and **GitHub-hosted Linux**
+with an owned-bridge relay; see [CI operations and validation](ci.md).
+Other hosts fail explicit Docker
 requests rather than being counted as passing. Install `kind`, `kubectl`,
 and web's locked Node dependencies plus Chromium:
 
@@ -207,4 +220,4 @@ listed after successful runs.
   complete for the explicitly bounded envelope in `presence-capacity.md`. The
   few-agent registration scenarios alone do not establish capacity.
 - Core/smuggler documentation reconciliation and read-only diff preview are complete.
-  Coordinated CI remains open; no transfer or remote mutation was added.
+  Coordinated CI now passes the Linux checkpoint above; no transfer or remote mutation was added.
