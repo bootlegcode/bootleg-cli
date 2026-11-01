@@ -16,9 +16,28 @@ class KindAcceptance:
         self.name = name
         self.kubeconfig = home / "kind-kubeconfig"
         self.env = dict(os.environ, KIND_EXPERIMENTAL_DOCKER_NETWORK=network)
+        self.failure_category = None
 
     def run(self, *args, **kwargs):
-        return subprocess.check_output(args, text=True, env=self.env, timeout=300, **kwargs).strip()
+        try:
+            return subprocess.check_output(args, text=True, env=self.env, timeout=300,
+                                           stderr=subprocess.PIPE, **kwargs).strip()
+        except subprocess.TimeoutExpired:
+            self.failure_category = "command_timeout"
+            raise
+        except subprocess.CalledProcessError as error:
+            # Classify known diagnostics without persisting raw command output,
+            # kubeconfig paths, secret manifests or Kubernetes log contents.
+            text = (error.stderr or "").lower()
+            self.failure_category = "command_failed"
+            for phrase, category in (("no space left on device", "disk_exhausted"),
+                                     ("failed to pull image", "image_pull_failed"),
+                                     ("timed out", "readiness_timeout"),
+                                     ("deadline exceeded", "readiness_timeout")):
+                if phrase in text:
+                    self.failure_category = category
+                    break
+            raise
 
     def kubectl(self, *args, **kwargs):
         return self.run("kubectl", "--kubeconfig", str(self.kubeconfig),

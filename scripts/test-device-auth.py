@@ -608,6 +608,7 @@ def main():
             print("Registration acceptance: " + ("GREEN (evidence levels reported above)" if complete else "INCOMPLETE; optional prerequisites/scenarios skipped"))
         finally:
             failure = sys.exc_info()[0]
+            disk_free_bytes = shutil.disk_usage(ROOT).free
             for child in children:
                 if child.poll() is None:
                     child.terminate()
@@ -635,6 +636,8 @@ def main():
             report = dict(scenarios=results, registration_complete=not failure and not cleanup_failed and all(
                               value.startswith("passed:") for value in results.values()),
                           failure_type=failure.__name__ if failure else None,
+                          disk_free_bytes=disk_free_bytes,
+                          kind_failure=kind_cluster.failure_category if kind_cluster else None,
                           browser_failure_stage=browser_failure_stage,
                           cleanup="failed" if cleanup_failed else "completed",
                           failure_locations=[dict(script=Path(frame.filename).name, line=frame.lineno)

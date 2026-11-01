@@ -92,6 +92,12 @@ def main():
     report_path = created.pop()
     report = json.loads(report_path.read_text())
     summary = summarize(report)
+    if type(report.get("disk_free_bytes")) is int and report["disk_free_bytes"] >= 0:
+        summary["disk_free_bytes_at_cleanup"] = report["disk_free_bytes"]
+    if report.get("kind_failure") in ("command_timeout", "command_failed", "disk_exhausted", "image_pull_failed", "readiness_timeout"):
+        summary["kind_failure"] = report["kind_failure"]
+    if report.get("failure_type") in ("AssertionError", "CalledProcessError", "TimeoutExpired", "InjectedAcceptanceFailure"):
+        summary["failure_type"] = report["failure_type"]
     if report.get("browser_failure_stage") in ("command", "chromium_start", "cdp_connect", "page_navigation", "initial_live"):
         summary["browser_failure_stage"] = report["browser_failure_stage"]
     summary["failure_locations"] = [
