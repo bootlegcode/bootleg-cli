@@ -1,7 +1,7 @@
 # CI operations
 
-Repository workflows run formatting, lint and locked Rust tests on Ubuntu 24.04
-with Rust 1.98.1. Core regenerates schemas/fixtures and rejects tracked or untracked
+CLI workflows run formatting, lint and locked Rust tests on Ubuntu 24.04
+with Rust 1.99.1. Core regenerates schemas/fixtures and rejects tracked or untracked
 drift. Smuggler additionally builds its real Docker image and tests Linux PID 1
 TERM/KILL behavior. Web separates domain tests, direct JavaScript tests, disposable
 real-store contracts and actual Chromium tests. Existing web Clippy warnings are
@@ -34,7 +34,7 @@ The Linux path passed full acceptance and injected-failure cleanup in
 at CLI `4f9737147aacaf90c916c90ad567bb1288ae9921`. Reports below preserve the exact
 sibling pins and evidence; the workflow's existence alone is not evidence.
 
-The job provisions Rust 1.98.1, cargo-nextest 0.9.114, Node 24.11.1, Python 3,
+The job provisions Rust 1.99.1, cargo-nextest 0.9.114, Node 24.11.1, Python 3,
 fzf, kind v0.33.0 and Chromium from web's npm lockfile; Docker and kubectl are
 supplied by the runner. Native dev/test debug symbols and incremental compilation
 are disabled to fit native builds, workspace tests and kind within hosted disk
