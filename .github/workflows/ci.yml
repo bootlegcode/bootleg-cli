@@ -27,3 +27,4 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
       - run: python3 scripts/test-ci-registration.py
+      - run: python3 scripts/test-acceptance-pty.py

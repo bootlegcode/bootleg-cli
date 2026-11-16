@@ -29,6 +29,7 @@ import urllib.request
 
 from acceptance_kind import KindAcceptance
 from acceptance_network import verify_disabled
+from acceptance_pty import finish_process, read_pty
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT.parent / "bootleg-web"
@@ -325,13 +326,12 @@ def main():
                 try:
                     while proc.poll() is None and time.monotonic() < deadline:
                         if select.select([master], [], [], .1)[0]:
-                            try:
-                                chunk = os.read(master, 65536)
-                                transcript += chunk
-                                if b"\x1b[6n" in chunk:
-                                    os.write(master, b"\x1b[1;1R")
-                            except OSError:
+                            chunk = read_pty(master)
+                            if not chunk:
                                 break
+                            transcript += chunk
+                            if b"\x1b[6n" in chunk:
+                                os.write(master, b"\x1b[1;1R")
                         text = transcript.decode(errors="replace")
                         if approve and not approved:
                             match = re.search(r"at (http://\S+) using code", text)
@@ -352,8 +352,9 @@ def main():
                             time.sleep(.3)
                             os.write(master, b"\x1b" if cancel else b"\r")
                             selected_project = True
-                    assert proc.poll() is not None, repr(transcript)
-                    stdout, _ = proc.communicate(timeout=3)
+                    # The slave may close before waitpid can observe process exit.
+                    # Wait rather than asserting on a racing nonblocking poll.
+                    stdout, _ = finish_process(proc, deadline)
                     assert (proc.returncode == 0) != cancel, text
                     assert selected_project, text
                     assert not approve or (approved and "Could not open a browser automatically" in text)
