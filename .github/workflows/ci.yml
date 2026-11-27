@@ -6,9 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
-    secrets:
-      BOOTLEG_REPO_READ_TOKEN:
-        required: true
 permissions:
   contents: read
 jobs:
@@ -32,7 +29,6 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           repository: bootlegcode/bootleg-core
-          token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
           ref: ${{ steps.pins.outputs.core }}
           path: bootleg-core
           persist-credentials: false

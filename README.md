@@ -93,7 +93,7 @@ Human output uses consistent rounded tables/panels on interactive terminals, wit
 
 ## CLI development and tests
 
-These commands compile and test the **CLI executable itself**, not your application. Building from source currently requires Rust and access to the private `bootleg-core` repository, checked out at `../bootleg-core` at the revision in [`scripts/acceptance-revisions.json`](scripts/acceptance-revisions.json). A standalone public checkout cannot build yet.
+These commands compile and test the **CLI executable itself**, not your application. To build from source, install Rust and check out the public [`bootleg-core`](https://github.com/bootlegcode/bootleg-core) repository at `../bootleg-core` at the revision in [`scripts/acceptance-revisions.json`](scripts/acceptance-revisions.json). No private repository access is needed.
 
 ```sh
 cargo build --locked

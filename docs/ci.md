@@ -20,12 +20,14 @@ build profiles are unchanged.
 
 ## Private checkout access
 
-The current workflows need read access to private sibling repositories. For
-trusted jobs, `BOOTLEG_REPO_READ_TOKEN` should have Contents read-only access to
-`bootleg-core` (also `bootleg-web` and `bootleg-smuggler` for full registration).
-Don't use an admin token. Checkout credentials are not persisted. Fork PRs don't
-receive the secret and cannot run these checks. Keep credentialed jobs in trusted
-private CI before making this repo public; don't grant secrets to fork PR code.
+`bootleg-core` is public. All workflows check out its pinned revision with the
+standard Actions token; CLI checks (including fork PRs) and releases no longer
+require a PAT.
+
+Only full registration still uses `BOOTLEG_REPO_READ_TOKEN`. Give it Contents
+read-only access to `bootleg-web` and `bootleg-smuggler` only. Deleting the secret
+without replacing it will break full registration, but not CLI checks or releases.
+Checkout credentials are not persisted, and full registration never runs PR code.
 
 ## CLI releases
 
