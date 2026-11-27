@@ -46,7 +46,7 @@ ENTRYPOINT ["python3", "/fixture.py"]
             if run.returncode:
                 raise RuntimeError(run.stderr)
             report = json.loads(run.stdout)
-            path = ROOT / "docs/diff-preview/syscalls.json"
+            path = ROOT / ".pi/acceptance/preview-syscalls.json"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
             print("PASS: isolated Linux capture syscall proof; " + str(path))

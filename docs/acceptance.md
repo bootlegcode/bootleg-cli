@@ -1,240 +1,88 @@
-# Registration acceptance checkpoint
+# Developer acceptance tests
 
-## Mutation ambiguity and failure-cleanup checkpoint
+## Setup
 
-At CLI `34a4bf1`, all seven failure-matrix cases passed on macOS Docker Desktop:
-committed response loss for creation/rotation/device exchange, startup failure,
-real Chromium timeout, SIGINT, SIGTERM, partial Docker provisioning and partial
-kind provisioning. The mutation case contains three independently asserted
-scenarios. Actual web/stores/CLI are used; responses are dropped after successful
-server completion, not mocked. Cleanup and preservation of unrelated resources
-are checked, including temporary credentials and browser process groups.
+Put `bootleg-cli`, `bootleg-core`, `bootleg-web`, and `bootleg-smuggler` under
+one parent directory. The sibling repos are private. Check them out at the
+revisions in [`scripts/acceptance-revisions.json`](../scripts/acceptance-revisions.json)
+from the CLI revision you want to test. The harness checks the pins but never
+changes your checkouts. Use `--allow-dirty-dependencies` only to test deliberate
+tracked edits at the pinned revisions; the report records them.
 
-Full `--kind` registration also passed with `registration_complete: true` and
-cleanup complete. All repositories had no tracked edits in these final runs.
-CLI tests: 76 passed / 4 explicitly ignored; CI report sanitizer tests: 5 passed.
-Commands, exact revisions, sanitized durable evidence and SIGKILL/recovery limits:
-[failure acceptance](failure-acceptance/README.md). The intermittent web nextest
-stdio diagnostic remains a separately documented triage result, not a claimed fix.
+Install Rust/Cargo, cargo-nextest, Docker, Python 3, Node, and `fzf` on a host
+with Unix PTYs. For `--kind`, also install kind and kubectl. The Docker and kind
+paths support Linux and macOS Docker Desktop. Allow network access for downloading
+dependencies and images and leave capacity for a dedicated Docker network.
 
-## GitHub Actions Linux checkpoint
-
-Full pinned registration and deliberate post-kind failure cleanup passed on a
-GitHub-hosted Ubuntu 24.04 runner at CLI `4f9737147aacaf90c916c90ad567bb1288ae9921`.
-[Run 41326595979](https://github.com/bootlegcode/bootleg-cli/actions/runs/41326595979)
-uses an owned-bridge relay, actual CLI/web/smuggler/Chromium, Docker and kind.
-All 18 scenarios passed with `registration_complete: true`; both success and
-injected-failure runs verified owned-resource/private-file cleanup. Exact pins,
-sanitized report allowlist, historical failures and operational prerequisites:
-[CI operations](ci.md). Durable [registration](ci-evidence/41326595979-registration.json)
-and [failure cleanup](ci-evidence/41326595979-cleanup.json) reports are separate
-from the historical local checkpoints below.
-
-## Initial registration evidence
-
-Initial full registration acceptance used CLI `f29e2cc` and web `515974d`.
-[Exact historical revisions and cross-repository scope](../../bootleg-core/docs/registration-evidence.md)
-and the [sanitized successful report](../.pi/acceptance/bootleg-acceptance-d045c3a7f1ac/report.json)
-record `registration_complete: true` and completed cleanup. Later checkpoints below
-are separate evidence; documentation reconciliation does not rerun those tests.
-
-## Read-only diff preview checkpoint
-
-The complete pinned `--kind` registration suite remains green after exposing
-`bootleg diff`, including real registered-agent preview, authorization denial and
-forced multi-page discovery. Latest tested implementation: CLI `414c6ca`;
-core/web/smuggler pins below are unchanged. Durable sanitized report:
-[`diff-preview/registration.json`](diff-preview/registration.json). Cleanup completed.
-The CLI tracked-edit flag reflects the concurrently regenerated syscall report,
-not changes to the implementation under test.
-
-Independent Linux capture strace passed with networking disabled and read-only
-root filesystem; no filesystem mutation, lock, network or configured helper calls
-were observed (stdio opens of `/dev/null` are allowed). Durable report:
-[`diff-preview/syscalls.json`](diff-preview/syscalls.json). CLI tests: 76 passed,
-4 explicitly ignored; optional fzf test separately passed; clippy/fmt/diff checks
-passed. See [usage, conservative source refusals and evidence scope](diff-preview.md).
-This completes read-only preview, not synchronization, transfer/apply or a claim
-that reported build metadata verifies the current container filesystem.
-
-## Presence capacity follow-up
-
-Measured shared snapshot locks reduce heartbeat p99 from 1,379.9 ms to 44.4 ms
-at 100 agents / 256 SSE viewers / two replicas (300-second matched runs).
-No observed false expiry; tested envelope, startup caveats, artifacts and exact
-commands: [presence-capacity.md](presence-capacity.md). Full `--kind` acceptance
-rerun is green at the pins below; all owned resources were cleaned. Durable report:
-`docs/presence-capacity/66fc0c7d260f-registration.json`.
-
-## Presence quota follow-up
-
-Active-session admission now counts retained offline reconnects, while allowing
-connected replacement without increasing occupancy. Independent PostgreSQL pools
-and Valkey connections race admissions with small limits in the real-store suite.
-`just test`: 109 passed; `bash scripts/test-integration.sh --presence`: 4 passed.
-Full `python3 scripts/test-device-auth.py --kind` passed with the revisions below;
-sanitized report: `.pi/acceptance/bootleg-acceptance-3931a14dfc59/report.json`.
-The harness reported successful cleanup. An earlier tool-timeout interrupted run
-(`bootleg-acceptance-dabaf4a50814`) was manually cleaned by exact owned resource
-prefix before retry; no development services or existing clusters were changed.
-These quota tests establish correctness only; subsequent capacity evidence is
-linked above.
-
-## Reproduce
-
-Use sibling checkouts `bootleg-{core,cli,smuggler,web}` under one parent. The harness
-checks exact compatible dependency revisions in `scripts/acceptance-revisions.json`
-before building; it never checks out/reset repositories for you:
-
-| Repository | Revision |
-| --- | --- |
-| core | `17a784d0f0fe654e88caf226274ef9f792d193fb` |
-| web | `4e67ab48fe875ed8725830424e9236991191eae5` |
-| smuggler | `7869c5da4015894eb523232e0285c11140d03143` |
-| CLI | `414c6caf5b6b02ba7c5eff06bff24bd966f6b355` (read-only preview checkpoint) |
-
-The table records the last executed preview checkpoint, not necessarily current
-HEAD. Documentation-only reconciliation subsequently advances dependency pins;
-[`scripts/acceptance-revisions.json`](../scripts/acceptance-revisions.json) is the
-current enforced set. These pin changes do not claim a new acceptance run.
-
-Tracked dependency edits require explicit `--allow-dirty-dependencies` and are
-recorded in the report. Untracked handoff documents are preserved, not removed.
-
-Prerequisites: Rust/Cargo, **cargo-nextest**, Docker daemon, Python 3 (standard library
-only), Node, fzf, and Unix PTYs. Full Docker/kind acceptance has historical evidence
-on **macOS Docker Desktop** with `host.docker.internal` and **GitHub-hosted Linux**
-with an owned-bridge relay; see [CI operations and validation](ci.md).
-Other hosts fail explicit Docker
-requests rather than being counted as passing. Install `kind`, `kubectl`,
-and web's locked Node dependencies plus Chromium:
+From `bootleg-cli`, install the browser dependencies from the locked web checkout:
 
 ```sh
-cd bootleg-web
-npm ci
-npx playwright install chromium
-cd ../bootleg-cli
-# Full registration acceptance, including isolated kind and Docker:
-python3 scripts/test-device-auth.py --kind
+(cd ../bootleg-web && npm ci && npx --no-install playwright install chromium)
 ```
 
-`--kind` implies `--docker`. Tested with kind v0.33.0; the node image is pinned to
-`kindest/node:v1.32.11@sha256:5fc52d52a7b9574015299724bd68f183702956aa4a2116ae75a63cb574b35af8`.
-Kind's experimental Docker-network override keeps nodes on this run's owned
-network. Its use is an explicit compatibility limitation, not a production deployment
-recommendation. The syscall-test image installs strace from Debian repositories;
-network access for tool/image acquisition is required. Docker build cache and base
-images are retained, not pruned. One free Docker address-pool allocation is needed;
-if exhausted, do not delete unrelated networks. Avoid concurrent store suites on
-hosts with limited address pools.
+On a fresh Linux host, install Chromium's system dependencies too (Playwright's
+`install --with-deps chromium`). See [CI operations](ci.md) for the hosted setup.
 
-Smaller runs explicitly skip prerequisite-dependent scenarios:
+## Run registration
 
 ```sh
-python3 scripts/test-device-auth.py            # skips Docker/syscall proof and kind
-python3 scripts/test-device-auth.py --docker   # skips kind
+python3 scripts/test-device-auth.py            # native scenarios only
+python3 scripts/test-device-auth.py --docker   # adds Docker and Linux syscall checks
+python3 scripts/test-device-auth.py --kind     # full run; includes --docker
 ```
 
-All variants build the actual CLI/web/smuggler binaries with `--locked`. They do not
-run web's `just rebuild`, which would recreate development services. Stores bind
-randomized loopback ports. Accounts and projects exist only in throwaway PostgreSQL
-18. Account setup uses actual HTTP registration forms, then narrowly scoped DB
-email-verification fixtures; email verification/delivery is not asserted. Device
-approval/denial uses Chromium UI. Agent credentials enter only at runtime; agents
-never inherit DB credentials or web signing keys. Tokens are absent from arguments,
-images and build arguments. Kubernetes uses runtime Secret references; kubeconfig
-and secret source files live in the private temporary home.
+The harness builds the actual CLI, web service, and smuggler with `--locked` and
+uses disposable PostgreSQL, Valkey, Mailpit, and Chromium. It covers approval and
+denial, interactive configuration with a real PTY, project creation and rotation,
+authorization and revocation, agent lifecycle, browser SSE, and diff preview.
+It marks disposable accounts email-verified in the database: this is not a test
+of email delivery or OS browser dispatch. Supplemental session-fencing tests use
+real stores and a WebSocket client, not the smuggler executable.
 
-## Scenario results
-
-`--kind` completed successfully on macOS. **Registration acceptance is green at this
-checkpoint**, with the evidence levels below. Capacity/load evidence is reported
-separately in [presence-capacity.md](presence-capacity.md). This does not claim a
-complete web CI pass or file synchronization. Separate read-only diff preview
-evidence is linked above.
-
-| Scenario | Result / evidence level |
-| --- | --- |
-| Login approval, pending long poll and denial | PASS — actual CLI + Chromium UI |
-| Private credential files / no token in login output | PASS — executable/filesystem assertions |
-| Interactive configuration, cancellation, multiple orgs/projects | PASS — actual CLI + fzf PTY |
-| CLI project creation and explicit rotation | PASS — executable + real web/stores |
-| Expired credentials, logout/revocation and recovery | PASS — CLI + Chromium; expiry set in disposable DB |
-| Cross-org isolation | PASS — two real accounts/CLI credentials, disjoint org discovery, bidirectional project discovery denial, unauthorized rotation returns not_found |
-| Plain Docker agent in CLI and browser | PASS with --docker — actual built image + real discovery |
-| Two kind replicas and two instrumented containers per pod | PASS with --kind — two pods, app/worker per pod; four distinct ContainerIds, Downward API metadata and labels matched to actual pod UIDs |
-| Duplicate display labels | PASS — two native agents remain distinct |
-| Unknown/dirty baselines | PASS — native metadata in CLI and actual Chromium-rendered baseline cells |
-| Network interruption/offline deadline | PASS with --docker — dedicated network disconnect, offline within 45-second lease + 10-second observation allowance |
-| Reconnect identity/session | PASS with --docker — same ContainerId and different SmugglerSessionId after network reconnect |
-| Process restart identity | PASS — real native smuggler restart creates a new ContainerId |
-| Old-session heartbeat/disconnect fencing | PASS — supplemental real-store domain/adapter and actual WebSocket-client tests; **not smuggler executable evidence** |
-| Rotation rejects new and existing old-key agents | PASS — CLI rotation, executable agents become offline within 25-second observation bound; new old-key process creates no record after three seconds |
-| Deactivation rejects new/existing agents | PASS — disposable DB mutation, actual agents offline within 25 seconds; new inactive-project agent creates no record |
-| Control-plane outage preserves application | PASS — kill/restart only owned web process; application file timestamps continue advancing |
-| Authorization loss preserves application | PASS — application timestamp continues advancing after rotation/deactivation |
-| Disabled mode no agent network I/O | PASS with --docker — strace across actual Linux process tree records zero network syscalls; enabled positive control attempts network I/O; both preserve application exit 23 |
-| Browser SSE without manual refresh | PASS — real Chromium DOM changes on actual agent changes |
-| Hidden tabs disconnect/reconnect | PASS — native document visibility with focus emulation disabled, CDP observes old SSE request ending and a new request on foreground |
-| Interrupted stream marks retained data stale | PASS — actual web process outage; rows retained, stale status, automatic recovery |
-| Permission loss clears retained data | PASS — disposable account deactivated during established stream; rows removed/results hidden |
-| Agent labels rendered as text | PASS — literal img/onerror label, no injected img/b DOM nodes |
-
-The supplemental fencing suite runs **after** executable/browser scenarios, against
-new test databases in the same disposable PostgreSQL container and the same owned
-Valkey instance. The native web process is stopped first. The command is:
+## Run targeted checks
 
 ```sh
-cargo run --locked -p bootleg-infrastructure --example test_database -- --presence
+# Committed response loss plus startup, browser, signal and partial provisioning failures:
+python3 scripts/test-acceptance-failures.py
+# Or select cases (repeat --case):
+python3 scripts/test-acceptance-failures.py --case mutations --case browser-timeout
+
+# Local diff capture under strace in a network-disabled, read-only Linux container:
+python3 scripts/test-preview-syscalls.py
+
+# Presence load: agents, viewers, web replicas, seconds
+python3 scripts/test-device-auth.py --presence-load 100,256,2,300
 ```
 
-The harness supplies isolated environment settings; do not run it with development
-store URLs. It exercises independent store adapters and real WebSocket connections,
-not a canned transport server. It intentionally is not relabeled as executable-agent
-acceptance.
+The mutation tests drop successful responses from the real server and check that
+the CLI does not retry creation, rotation, or device exchange, and does not leave
+behind undelivered credentials. The failure matrix checks that owned resources
+are removed and unrelated resources survive. The capture trace checks for file
+mutation, locks, helper execution, and network activity in the local capture
+adapter, not in the full CLI's HTTP discovery path.
+
+The load driver uses protocol clients against real web replicas and shared
+disposable stores. It is not browser-rendering or executable-agent evidence.
+Viewers establish their streams before agents arrive; measure on deployment
+hardware, and don't infer cold-start resilience or end-to-end delivery latency
+from this test.
 
 ## Diagnostics, failures and cleanup
 
-Each run prints an owner-only allowlisted JSON report path:
-`.pi/acceptance/bootleg-acceptance-<unique>/report.json`. It records scenario status,
-repository revisions, tracked-edit flags, failure class and cleanup status. It never
-persists raw exceptions, cookies, keys, UI HTML or secret-bearing DTOs. Not-reached
-scenarios are skipped, not passed. `registration_complete` is true only when every
-scenario passed and cleanup succeeded. A partial run may exit zero with explicit
-skips; automation requiring full registration must check that field or use `--kind`.
+Registration prints a private, allowlisted report path under
+`.pi/acceptance/bootleg-acceptance-<id>/report.json`. Load runs also write
+`load.json`; the failure matrix writes `.pi/acceptance/failure-matrix.json`.
+The capture syscall check writes `.pi/acceptance/preview-syscalls.json`.
+Review reports before sharing. Do not publish raw logs, profiles, kubeconfigs,
+or credentials. A partial run can exit zero with skipped scenarios; automation
+requiring full coverage must require `registration_complete: true` or use the
+[CI wrapper](ci.md#full-registration).
 
-Raw web/agent/strace logs and credentials stay inside the temporary home and are
-deleted. Failed-run console captures are private until reviewed. Local successful
-build/report log: `/tmp/bootleg-acceptance-kind.log`; the sanitized JSON is the durable
-handoff artifact.
-
-Cleanup terminates owned children, removes only owned container IDs/volumes, deletes
-only the newly named kind cluster using its private kubeconfig, then removes its
-network and uniquely tagged images. The temporary home removes kubeconfig, secrets,
-Chromium profiles and logs. SIGTERM/SIGINT unwind cleanup; SIGKILL/host failure cannot
-be cleaned synchronously. Never prune shared Docker state or delete resources using
-current-context. The existing `bootleg` cluster was left untouched and remained
-listed after successful runs.
-
-## Findings and limitations
-
-- Cross-org token rotation exposed existing hidden IDs through forbidden responses.
-  Web `515974d` fixes this; visible non-manager members still receive forbidden.
-  Real-store tests verify hidden/member/deleted/inactive-org outcomes and no key change.
-- Full Chromium is launched and attached with Playwright `noDefaults: true`. Default
-  focus emulation falsely keeps background pages visible; no visibility property or
-  EventSource is mocked. Hidden streams are verified through real CDP network events.
-- Project deactivation preserves read visibility. Account eligibility loss is a
-  separate browser authorization test, not inferred from project deactivation.
-- One development run exhausted Docker's default address pool while another disposable
-  store suite ran concurrently. Neither suite pruned unrelated networks. The harness
-  no longer reports failed network creation as a failed removal of a nonexistent network.
-- `just test` in web: 109 passed, 61 skipped. Full web integration: infrastructure
-  43 passed; account/view suite 8 passed, 3 failed on unchanged dashboard markup
-  expectations; later security suite not reached. Workspace formatting check also
-  reports existing drift. See [web acceptance](../../bootleg-web/docs/registration-acceptance.md).
-- Phase 2 quota/concurrent-admission regressions and measured snapshot capacity are
-  complete for the explicitly bounded envelope in `presence-capacity.md`. The
-  few-agent registration scenarios alone do not establish capacity.
-- Core/smuggler documentation reconciliation and read-only diff preview are complete.
-  Coordinated CI now passes the Linux checkpoint above; no transfer or remote mutation was added.
+The harness cleans up its children, private temporary home, and owned Docker and
+kind resources, including on SIGINT/SIGTERM. Docker build cache and base images
+are retained. SIGKILL or host failure can leave resources behind. Match the exact
+run prefix in the report to its containers, network, tagged images, kind cluster,
+and private temporary directory before deleting anything. Use the run's private
+kubeconfig if available; don't change your current Kubernetes context, prune
+shared Docker state, or delete unrelated networks. If address pools are exhausted,
+avoid running disposable suites concurrently.

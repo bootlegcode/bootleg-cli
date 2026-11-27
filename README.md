@@ -4,13 +4,13 @@ Configure a local project and discover its running smuggler agents. Presence mea
 
 ## Configure a project
 
-Install [`fzf`](https://github.com/junegunn/fzf) on your PATH for interactive selection, then:
+Install [`fzf`](https://github.com/junegunn/fzf) on your PATH for interactive selection. If your repository doesn't already have an API origin in `.bootleg.json`, supply your server's HTTPS origin:
 
 ```sh
-bootleg config
+BOOTLEG_API_URL=https://bootleg.example.com bootleg config
 ```
 
-The normal user experience targets Bootleg's hosted API through a built-in default. Most users should never need to know or change the API URL. `BOOTLEG_API_URL` is an advanced override for testing against another server and, potentially, future enterprise/on-prem installations—not a normal setup step.
+Once the origin is saved, you can run `bootleg config` without the environment variable.
 
 `bootleg config`:
 
@@ -50,7 +50,7 @@ bootleg diff --container-id container_<id>
 bootleg --json diff --container-id container_<id> --container-id container_<other>
 ```
 
-Exit codes are **0** (no changes), **1** (changes), and **2** (failure). No file contents, transfers, restarts or remote writes. Read the [scope, sensitive-data policy, conservative refusals and validation evidence](docs/diff-preview.md) before publishing reports.
+Exit codes are **0** (no changes), **1** (changes), and **2** (failure). No file contents, transfers, restarts or remote writes. Read the [source scope, sensitive-data policy and limitations](docs/diff-preview.md) before publishing reports.
 
 ## Browser login
 
@@ -73,13 +73,11 @@ Mutations never automatically retry. On an uncertain result reconcile server sta
 
 ## Configuration and security
 
-The intended API URL precedence is `--api-url` > `BOOTLEG_API_URL` > repository `api_url` > built-in hosted API default. Leave these overrides unset for normal hosted use. For testing against a local server, for example:
+API URL precedence is `--api-url` > `BOOTLEG_API_URL` > repository `api_url`. There is no built-in hosted default. To test against a local server:
 
 ```sh
 BOOTLEG_API_URL=http://localhost:3000 bootleg --allow-http config
 ```
-
-**Development status:** the current implementation still requires an explicit API URL or an existing repository `api_url`; the hosted default has not yet been wired in. The production endpoint needs to be confirmed before that implementation change. The override above is a development workaround, not the intended onboarding experience.
 
 Project IDs are typed strings such as `project_6m8x91b0349vbrq30fxn997q5s`, not integers. For existing repository configs with numeric IDs, remove the old `project_id` and run `bootleg config` to select the project again.
 
@@ -95,7 +93,7 @@ Human output uses consistent rounded tables/panels on interactive terminals, wit
 
 ## CLI development and tests
 
-These commands compile/test the **CLI executable itself**, not your application. Requires Rust (edition 2024) and sibling `../bootleg-core` at the [coordinated acceptance pin](docs/acceptance.md).
+These commands compile and test the **CLI executable itself**, not your application. Building from source currently requires Rust and access to the private `bootleg-core` repository, checked out at `../bootleg-core` at the revision in [`scripts/acceptance-revisions.json`](scripts/acceptance-revisions.json). A standalone public checkout cannot build yet.
 
 ```sh
 cargo build --locked
@@ -117,14 +115,4 @@ Real-server tests are opt-in, using the actual web service/backing stores and re
 cargo test --test real_server -- --ignored
 ```
 
-Run repeatable registration acceptance with Docker, Python 3, `fzf`, Node, cargo-nextest, and the sibling core/web/smuggler checkouts (see [pinned revisions, prerequisites and results](docs/acceptance.md)):
-
-```sh
-python3 scripts/test-device-auth.py
-# Full acceptance on macOS Docker Desktop; requires kind and kubectl:
-python3 scripts/test-device-auth.py --kind
-```
-
-This builds all three binaries and starts disposable PostgreSQL, Valkey, Mailpit, real web, and native smuggler processes. Chromium approves/denies CLI login using the actual UI. The suite also exercises real `fzf` under a PTY, project creation/rotation, and native agent discovery. Only its disposable account is marked email-verified directly in the database. Containers and temporary credentials are cleaned up on exit. No mock API/WS server substitutes are used. OS browser dispatch is not tested.
-
-Full `--kind` registration acceptance passed, including Docker/kind discovery, syscall-level disabled-mode checks, cross-org isolation, and real Chromium SSE/hidden-tab behavior. Supplemental real-store/WebSocket fencing tests are explicitly distinguished from executable-agent evidence. Default runs skip Docker/kind-dependent scenarios. The harness verifies compatible sibling revisions before building and retains sanitized JSON reports under `.pi/acceptance/`. Read-only preview also has [real registered-agent and isolated capture-syscall evidence](docs/diff-preview.md). CI remains a separate milestone. See [acceptance results](docs/acceptance.md).
+For disposable full-stack tests, including browser login, agent discovery, and diff preview, see the [acceptance test guide](docs/acceptance.md). See [CI operations](docs/ci.md) for the hosted workflow and cleanup gate.

@@ -36,8 +36,22 @@ the same bounded envelope on stdout. Broken output returns an operational failur
 | 1 | Complete preview, at least one changed target |
 | 2 | Invalid usage, authorization/discovery, baseline, unsupported source, limit, race or I/O failure |
 
-Clap help/parse behavior remains native. Every operational error is all-or-nothing:
-no partial successful targets or raw subprocess/server diagnostics are emitted.
+Clap help and argument parsing can return before a JSON report is created. Every
+operational error is all-or-nothing: no partial successful targets or raw
+subprocess/server diagnostics are emitted.
+
+## JSON output
+
+`--json` emits `schema_version: 1`, `status` (`ok` or `error`),
+`comparison: "reported_build_commit"`, `filesystem_verified: false`,
+`scope: "tracked_and_nonignored_untracked"`, `ignored_untracked: "excluded"`,
+and `targets` and `errors` arrays. On success, each target gives its
+`container_id`, `build_commit`, `relationship` (`equal` or `ancestor`), and
+`changes` sorted by path. Each change gives `path`, `kind` (`add`, `modify`, or
+`delete`), `old_bytes`, `new_bytes`, `old_mode`, and `new_mode`. Modes are Git
+mode strings (`100644` or `100755`); an absent side has null size and mode.
+On failure, `targets` is empty and `errors` contains diagnostics with a `code`,
+nullable `container_id`, and static `message`.
 
 ## Safety and conservative refusals
 
@@ -68,13 +82,15 @@ The v1 implementation deliberately refuses cases it cannot prove safe:
   No submodule traversal, initialization, remote inspection or credential-store
   reads through symlinks. Regular/executable additions and deletions are supported;
   executable-mode changes and changed binary/non-UTF-8 content are rejected.
-- Every sensitive-path candidate, including unchanged candidates: there is no
-  stat-cache shortcut that authorizes reading it. The component/basename/suffix
-  policy is specified in [v1](diff-preview-v1.md); it is not secret detection.
+- Every sensitive-path candidate, including unchanged candidates. Matching is
+  ASCII-case-insensitive: components named `.env` or starting with `.env.`,
+  `.ssh`, `.aws`, `.gnupg`, `credentials`, or `secrets`; basenames `id_rsa` or
+  `id_ed25519`; and filenames ending in `.pem`, `.key`, `.p12`, or `.pfx`.
+  Matching paths are not printed. This is a filename policy, not secret detection.
 - Changed paths with active `filter`, `working-tree-encoding` or `diff` attributes.
   Raw bytes are compared without filters, textconv or newline normalization.
 
-The fixed [v1 bounds](diff-preview-v1.md#bounds-and-deterministic-output) apply:
+The fixed limits are:
 32 targets; 100 discovery pages/20,000 records/16 MiB response bytes; 100,000 union
 paths; 4,096 bytes per path; 1,000 changes per baseline; 1 MiB per file/blob;
 16 MiB distinct compared input bytes (source and baseline both count); 4 MiB
@@ -82,32 +98,8 @@ serialized output; 30 seconds per Git/HTTP operation within a shared 120-second
 preview deadline. There are no override flags. Oversized unchanged files are
 conservatively rejected rather than trusting index stat metadata.
 
-## Reproduce validation
+## Developer checks
 
-```sh
-cargo test --locked
-cargo clippy --all-targets --locked -- -D warnings
-cargo fmt --check
-git diff --check
-python3 scripts/test-preview-syscalls.py
-python3 scripts/test-device-auth.py --kind
-```
-
-The syscall harness builds only allowlisted source files into an owned Docker
-image. It runs the actual local capture adapter under Linux strace with networking
-disabled and a read-only root filesystem. Fixtures and traces use an isolated
-bounded tmpfs; owned containers/images are cleaned in `finally`. It checks file
-and directory snapshots, absence of mutating/locking/network/helper syscalls,
-sensitive pre-read exclusion and symlink-target exclusion. Writable opens of
-`/dev/null` for suppressed Git stdio are explicitly allowed. This is capture-level
-proof, not a claim that authorized HTTP discovery performs no network I/O.
-
-The full pinned registration harness also tests the actual CLI against real web,
-PostgreSQL, Valkey and registered agents: differing/unknown/dirty/offline baselines,
-denied access, deterministic output, all exit codes and immutable source snapshots.
-Disposable retained/offline database fixtures force selected registered targets
-onto a later discovery page; no API/WS server is mocked.
-
-Durable evidence: [capture syscall report](diff-preview/syscalls.json) and
-[registration report](diff-preview/registration.json). Registration infrastructure
-and dependency pins are described in [acceptance.md](acceptance.md).
+See [acceptance tests](acceptance.md#run-targeted-checks) for the isolated local
+capture syscall check and the full-stack registration harness that exercises
+preview against registered agents.
