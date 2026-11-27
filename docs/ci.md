@@ -17,13 +17,20 @@ private CI before making this repo public; don't grant secrets to fork PR code.
 ## CLI releases
 
 [`release.yml`](../.github/workflows/release.yml) runs when a `v*` tag is pushed.
-Tag a commit containing the workflow and the matching `Cargo.toml` version (update
-`Cargo.lock` alongside any version bump). For example, for version `0.1.0`:
+From a clean `main` that matches `origin/main`, run one of these commands
+with `just`, Python 3.11+, Cargo, and `vinnie` installed. Cargo needs the sibling
+`bootleg-core` checkout.
 
 ```sh
-git tag -a v0.1.0 -m 'Release v0.1.0'
-git push origin v0.1.0
+just release        # patch (same as just release patch)
+just release minor
+just release major
 ```
+
+The recipe uses `Cargo.toml` as the starting version, updates it and `Cargo.lock`,
+and commits the bump. Vinnie tags that commit, then Git pushes `main` and the tag
+together. You need permission to push both refs to `origin`. If the push fails,
+fix the cause and retry the printed Git command instead of bumping again.
 
 The release runs the same CLI checks as branch CI and builds against the same
 pinned `bootleg-core` revision. Once all builds pass, it publishes one GitHub
