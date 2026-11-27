@@ -1,4 +1,5 @@
 /target
+/.bootleg.json
 .local-env
 /.pi/acceptance/
 /scripts/__pycache__/
