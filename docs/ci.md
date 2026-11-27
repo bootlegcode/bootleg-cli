@@ -5,6 +5,19 @@ and Python harness unit tests. The build needs the `bootleg-core` revision in
 [`scripts/acceptance-revisions.json`](../scripts/acceptance-revisions.json).
 Update pins alongside compatibility changes; the acceptance harness checks them.
 
+## Build performance
+
+Rust jobs cache crates.io archives and the registry index, keyed by runner and
+lockfile content. On a lockfile change, a fallback cache can supply unchanged
+crates; Cargo still fetches anything missing and builds with `--locked`. Git
+checkouts, Cargo credentials, and `target/` are not cached: build outputs can
+contain code from private sibling repositories.
+
+CLI checks and full registration disable incremental compilation and omit debug
+info for dev/test builds on disposable runners. Full registration downloads a
+pinned, SHA-256-verified nextest binary instead of compiling the tool. Release
+build profiles are unchanged.
+
 ## Private checkout access
 
 The current workflows need read access to private sibling repositories. For
