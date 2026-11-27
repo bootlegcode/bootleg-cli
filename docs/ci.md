@@ -14,6 +14,24 @@ Don't use an admin token. Checkout credentials are not persisted. Fork PRs don't
 receive the secret and cannot run these checks. Keep credentialed jobs in trusted
 private CI before making this repo public; don't grant secrets to fork PR code.
 
+## CLI releases
+
+[`release.yml`](../.github/workflows/release.yml) runs when a `v*` tag is pushed.
+Tag a commit containing the workflow and the matching `Cargo.toml` version (update
+`Cargo.lock` alongside any version bump). For example, for version `0.1.0`:
+
+```sh
+git tag -a v0.1.0 -m 'Release v0.1.0'
+git push origin v0.1.0
+```
+
+The release runs the same CLI checks as branch CI and builds against the same
+pinned `bootleg-core` revision. Once all builds pass, it publishes one GitHub
+Release with generated notes, binaries, and matching `.sha256` files for Linux
+x86-64 (GNU and musl), macOS (Intel and Apple Silicon), and Windows x86-64.
+A version like `0.2.0-rc.1` is published as a prerelease. Full registration
+is not a release gate. Nothing is published to Homebrew or crates.io.
+
 ## Full registration
 
 [`registration.yml`](../.github/workflows/registration.yml) runs manually or

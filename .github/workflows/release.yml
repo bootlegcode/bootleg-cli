@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      BOOTLEG_REPO_READ_TOKEN: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
+
+  build:
+    name: Build ${{ matrix.asset }}
+    needs: checks
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            asset: bootleg-linux-x86_64
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            asset: bootleg-linux-x86_64-musl
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            asset: bootleg-macos-x86_64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            asset: bootleg-macos-aarch64
+          - runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            asset: bootleg-windows-x86_64.exe
+    defaults:
+      run:
+        shell: bash
+        working-directory: bootleg-cli
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: bootleg-cli
+          persist-credentials: false
+      - id: pins
+        run: echo "core=$(jq -er '."bootleg-core"' scripts/acceptance-revisions.json)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: bootlegcode/bootleg-core
+          token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
+          ref: ${{ steps.pins.outputs.core }}
+          path: bootleg-core
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --target '${{ matrix.target }}'
+      - name: Install musl tools
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - name: Build and stage the CLI
+        env:
+          TARGET: ${{ matrix.target }}
+          ASSET: ${{ matrix.asset }}
+        run: |
+          cargo +1.99.1 build --locked --release --bin bootleg --target "$TARGET"
+          binary=bootleg
+          if [[ "$RUNNER_OS" == Windows ]]; then binary=bootleg.exe; fi
+          mkdir -p dist
+          cp "target/$TARGET/release/$binary" "dist/$ASSET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.asset }}
+          path: bootleg-cli/dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: bootleg-*
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums and publish
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          binaries=(bootleg-*)
+          for binary in "${binaries[@]}"; do
+            sha256sum "$binary" > "$binary.sha256"
+          done
+
+          options=(--verify-tag --generate-notes)
+          # Ignore build metadata when detecting a SemVer prerelease.
+          if [[ "${RELEASE_TAG%%+*}" == *-* ]]; then options+=(--prerelease); fi
+          release_url=$(gh release create "$RELEASE_TAG" "${options[@]}" -- bootleg-*)
+          {
+            printf '## [Release %s](%s)\n\n' "$RELEASE_TAG" "$release_url"
+            printf 'Each binary has a matching `.sha256` checksum.\n\n'
+            printf -- '- `%s`\n' "${binaries[@]}"
+          } >> "$GITHUB_STEP_SUMMARY"
