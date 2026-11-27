@@ -20,7 +20,7 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: '0'
       CARGO_INCREMENTAL: '0'
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: bootleg-cli
           persist-credentials: false
@@ -37,20 +37,20 @@ jobs:
                   assert re.fullmatch('[0-9a-f]{40}', sha)
                   print(f'{name}={sha}', file=output)
           PY
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bootlegcode/bootleg-core
           ref: ${{ steps.pins.outputs.bootleg-core }}
           path: bootleg-core
           persist-credentials: false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bootlegcode/bootleg-web
           ref: ${{ steps.pins.outputs.bootleg-web }}
           token: ${{ secrets.BOOTLEG_REPO_READ_TOKEN }}
           path: bootleg-web
           persist-credentials: false
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bootlegcode/bootleg-smuggler
           ref: ${{ steps.pins.outputs.bootleg-smuggler }}
@@ -59,7 +59,7 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.99.1 --profile minimal && rustup default 1.99.1
       - name: Cache crates.io downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/cache/index.crates.io-*
@@ -79,7 +79,7 @@ jobs:
           printf '%s  %s\n' "$NEXTEST_SHA256" "$archive" | sha256sum --check
           tar -xzf "$archive" -C "$HOME/.cargo/bin" cargo-nextest
           cargo nextest --version
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.11.1
       - name: Provision Linux tools
@@ -112,7 +112,7 @@ jobs:
         run: python3 scripts/ci-registration.py
       - name: Upload only normalized registration reports
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: registration-reports
           path: |
